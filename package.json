@@ -12,9 +12,10 @@
     "typecheck": "tsc --noEmit",
     "cap:sync": "npm run build && npx cap sync android",
     "icons:generate": "node scripts/generate-android-assets.mjs",
-    "android:debug": "pwsh -Command \"$env:JAVA_HOME='C:\\Program Files\\Android\\Android Studio\\jbr'; $env:ANDROID_HOME='C:\\Users\\Dell\\AppData\\Local\\Android\\Sdk'; Set-Location android; .\\gradlew.bat assembleDebug\"",
-    "android:release": "pwsh -Command \"$env:JAVA_HOME='C:\\Program Files\\Android\\Android Studio\\jbr'; $env:ANDROID_HOME='C:\\Users\\Dell\\AppData\\Local\\Android\\Sdk'; Set-Location android; .\\gradlew.bat assembleRelease\"",
-    "android:bundle": "pwsh -Command \"$env:JAVA_HOME='C:\\Program Files\\Android\\Android Studio\\jbr'; $env:ANDROID_HOME='C:\\Users\\Dell\\AppData\\Local\\Android\\Sdk'; Set-Location android; .\\gradlew.bat bundleRelease\""
+    "e2e:backend": "node scripts/run-backend-e2e.mjs",
+    "android:debug": "pwsh -Command \"if (-not $env:JAVA_HOME) { $env:JAVA_HOME='$HOME\\.gradle\\jdks\\temurin-21\\jdk-21.0.13+9' }; if (-not $env:ANDROID_HOME) { $env:ANDROID_HOME='$env:LOCALAPPDATA\\Android\\Sdk' }; Set-Location android; .\\gradlew.bat --no-daemon assembleDebug\"",
+    "android:release": "pwsh -Command \"if (-not $env:JAVA_HOME) { $env:JAVA_HOME='$HOME\\.gradle\\jdks\\temurin-21\\jdk-21.0.13+9' }; if (-not $env:ANDROID_HOME) { $env:ANDROID_HOME='$env:LOCALAPPDATA\\Android\\Sdk' }; Set-Location android; .\\gradlew.bat --no-daemon assembleRelease\"",
+    "android:bundle": "pwsh -Command \"if (-not $env:JAVA_HOME) { $env:JAVA_HOME='$HOME\\.gradle\\jdks\\temurin-21\\jdk-21.0.13+9' }; if (-not $env:ANDROID_HOME) { $env:ANDROID_HOME='$env:LOCALAPPDATA\\Android\\Sdk' }; Set-Location android; .\\gradlew.bat --no-daemon bundleRelease\""
   },
   "dependencies": {
     "@capacitor/android": "^7.4.4",

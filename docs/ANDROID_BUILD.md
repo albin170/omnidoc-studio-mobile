@@ -5,19 +5,19 @@
 | Tool | Required Version | Verified Local Path |
 | :--- | :--- | :--- |
 | Node.js | 20+ (LTS) | `v24.16.0` |
-| JDK | **JDK 21** (Android Studio JBR) | `C:\Program Files\Android\Android Studio\jbr` (`21.0.10`) |
-| Android SDK | Platform 35 / 36, Build-Tools 36+ | `C:\Users\Dell\AppData\Local\Android\Sdk` |
-| Android Studio | Ladybug / Meerkat or newer | `C:\Program Files\Android\Android Studio` |
+| JDK | **Eclipse Temurin JDK 21** (`21.0.13+9`) | `C:\Users\Dell\.gradle\jdks\temurin-21\jdk-21.0.13+9` |
+| Android SDK | Platform 35 / 36.1, Build-Tools 34 / 36 / 37 | `C:\Users\Dell\AppData\Local\Android\Sdk` |
+| Android Studio | Installed | `C:\Program Files\Android\Android Studio` |
 
-> **Important JDK Note:** Android Gradle Plugin (AGP) requires JDK 17 or JDK 21. Always point `JAVA_HOME` to Android Studio's bundled JBR (`21.0.10`) if your system `PATH` points to JDK 27.
+> **JDK Note:** Android Gradle Plugin 8.7.2 + Capacitor 7 require JDK 21 for Java toolchain compilation. On this workstation, Android Studio's bundled `jbr\bin\java.exe` hung when invoked from non-interactive PowerShell, so Eclipse Temurin JDK 21 (`jdk-21.0.13+9`) is provisioned and verified for CLI builds, and `foojay-resolver-convention` `1.0.0` is enabled in `android/settings.gradle`.
 
 ---
 
 ## 2. Environment Variables (PowerShell)
 
 ```powershell
-$env:JAVA_HOME = "C:\Program Files\Android\Android Studio\jbr"
-$env:ANDROID_HOME = "C:\Users\Dell\AppData\Local\Android\Sdk"
+$env:JAVA_HOME = "$env:USERPROFILE\.gradle\jdks\temurin-21\jdk-21.0.13+9"
+$env:ANDROID_HOME = "$env:LOCALAPPDATA\Android\Sdk"
 $env:Path = "$env:JAVA_HOME\bin;$env:ANDROID_HOME\platform-tools;$env:ANDROID_HOME\emulator;$env:Path"
 ```
 
@@ -43,10 +43,7 @@ npm run icons:generate
 
 ```powershell
 cd android
-.\gradlew.bat testDebugUnitTest
-.\gradlew.bat assembleDebug
-.\gradlew.bat assembleRelease
-.\gradlew.bat bundleRelease
+.\gradlew.bat --no-daemon testDebugUnitTest assembleDebug assembleRelease bundleRelease
 ```
 
 Or using npm scripts from repository root:
@@ -64,6 +61,6 @@ npm run android:bundle
 1. Open `omnidoc-studio-mobile/android` in Android Studio (`npx cap open android`).
 2. Wait for Gradle Sync to complete.
 3. Open **Device Manager** (`Tools -> Device Manager`) and create/start an AVD (recommended: Pixel 7 / API 35 Google APIs x86_64).
-   - Note: If the host machine has no AVD system image downloaded yet, Device Manager downloads it automatically on first AVD creation.
+   - Note: This workstation currently has `emulator.exe` and `adb.exe` installed, with `0` AVDs and `0` attached devices (`adb devices` empty, `system-images/` not yet downloaded). Android Studio Device Manager will download the system image on first AVD creation.
 4. Click **Run** (`Shift + F10`) to install and launch `app-debug.apk`.
 5. To connect to a locally running OmniDoc FastAPI backend on the host machine (`127.0.0.1:8000`), choose **Development** environment in the app (`http://10.0.2.2:8000/api/v1`) or forward via `adb reverse tcp:8000 tcp:8000`.
