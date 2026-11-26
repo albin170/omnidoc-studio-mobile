@@ -13,6 +13,42 @@ export interface CapturedPhoto {
   previewUrl: string;
 }
 
+export interface DeepLinkEvent {
+  rawUrl: string;
+  scheme: string;
+  host: string;
+  path: string;
+  params: Record<string, string>;
+}
+
+/**
+ * Parses an `omnidoc://` custom scheme deep link into normalized route + query params.
+ * Returns null for unrecognized schemes or malformed URLs.
+ */
+export function parseDeepLinkUrl(rawUrl: string): DeepLinkEvent | null {
+  if (!rawUrl || typeof rawUrl !== 'string') return null;
+  try {
+    const parsed = new URL(rawUrl.trim());
+    const scheme = parsed.protocol.replace(/:$/, '').toLowerCase();
+    if (scheme !== 'omnidoc') return null;
+
+    const params: Record<string, string> = {};
+    parsed.searchParams.forEach((value, key) => {
+      params[key] = value;
+    });
+
+    return {
+      rawUrl: rawUrl.trim(),
+      scheme,
+      host: parsed.hostname.toLowerCase(),
+      path: parsed.pathname || '/',
+      params,
+    };
+  } catch {
+    return null;
+  }
+}
+
 export function isNativePlatform(): boolean {
   try {
     return Capacitor.isNativePlatform();
@@ -190,28 +226,62 @@ export function registerAppLifecycle(handlers: {
   onResume?: () => void;
   onBackground?: () => void;
   onBackButton?: () => void;
+  onAppUrlOpen?: (event: DeepLinkEvent) => void;
 }): () => void {
   const handles: Array<{ remove: () => Promise<void> }> = [];
+  let active = true;
 
   App.addListener('appStateChange', ({ isActive }) => {
+    if (!active) return;
     if (isActive) {
       handlers.onResume?.();
     } else {
       handlers.onBackground?.();
     }
   })
-    .then((h) => handles.push(h))
+    .then((h) => {
+      if (active) handles.push(h);
+      else h.remove().catch(() => {});
+    })
     .catch(() => {});
 
   if (handlers.onBackButton) {
     App.addListener('backButton', () => {
-      handlers.onBackButton?.();
+      if (active) handlers.onBackButton?.();
     })
-      .then((h) => handles.push(h))
+      .then((h) => {
+        if (active) handles.push(h);
+        else h.remove().catch(() => {});
+      })
+      .catch(() => {});
+  }
+
+  if (handlers.onAppUrlOpen) {
+    const handleIncomingUrl = (rawUrl?: string | null) => {
+      if (!active || !rawUrl) return;
+      const parsed = parseDeepLinkUrl(rawUrl);
+      if (parsed) {
+        handlers.onAppUrlOpen?.(parsed);
+      }
+    };
+
+    App.addListener('appUrlOpen', (data) => {
+      handleIncomingUrl(data?.url);
+    })
+      .then((h) => {
+        if (active) handles.push(h);
+        else h.remove().catch(() => {});
+      })
+      .catch(() => {});
+
+    // Handle cold-start deep links when the app is launched from a closed state.
+    App.getLaunchUrl()
+      .then((launch) => handleIncomingUrl(launch?.url))
       .catch(() => {});
   }
 
   return () => {
+    active = false;
     handles.forEach((h) => h.remove().catch(() => {}));
   };
 }

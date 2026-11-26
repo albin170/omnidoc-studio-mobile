@@ -16,14 +16,15 @@ export type FileFormat =
   | 'html'
   | 'md';
 
-export type MobileTab = 'home' | 'library' | 'studios' | 'activity' | 'more';
+export type MobileTab = 'home' | 'convert' | 'pdf' | 'docs' | 'profile';
 export type MobileSubView =
   | 'none'
-  | 'pdf_studio'
-  | 'conversion_studio'
+  | 'word_studio'
+  | 'slides_studio'
   | 'sheets_studio'
+  | 'studios_hub'
+  | 'history'
   | 'notifications'
-  | 'profile'
   | 'settings'
   | 'admin'
   | 'ai_assistant';
@@ -217,7 +218,7 @@ export interface NotificationPreferences {
 
 export interface LocalProcessingHistoryItem {
   id: string;
-  kind: 'conversion' | 'pdf_operation' | 'sheet_export' | 'camera_scan' | 'upload';
+  kind: 'conversion' | 'pdf_operation' | 'sheet_export' | 'docx_export' | 'slides_export' | 'camera_scan' | 'upload';
   title: string;
   sourceFormat: string;
   targetFormat: string;
@@ -227,6 +228,15 @@ export interface LocalProcessingHistoryItem {
   error?: string;
   documentId?: string;
 }
+
+export type JobStatus =
+  | 'queued'
+  | 'validating'
+  | 'processing'
+  | 'verifying'
+  | 'completed'
+  | 'error'
+  | 'cancelled';
 
 export interface ConversionOptions {
   quality?: number;
@@ -240,7 +250,7 @@ export interface ConversionJob {
   sourceFile: File;
   sourceFormat: FileFormat;
   targetFormat: FileFormat;
-  status: 'queued' | 'validating' | 'processing' | 'verifying' | 'completed' | 'error' | 'cancelled';
+  status: JobStatus;
   progress: number;
   resultBlob?: Blob;
   resultFileName?: string;

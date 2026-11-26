@@ -1,5 +1,5 @@
 import pptxgen from 'pptxgenjs';
-import { PDFDocument, rgb, StandardFonts } from 'pdf-lib';
+import { PDFDocument, PDFFont, rgb, StandardFonts } from 'pdf-lib';
 import JSZip from 'jszip';
 import { SlideItem } from '../types';
 
@@ -15,6 +15,10 @@ export async function extractTextFromPptxFile(file: File): Promise<string[]> {
         return aNum - bNum;
       });
 
+    if (slideNames.length === 0) {
+      throw new Error('No slides found in PPTX archive');
+    }
+
     const slidesText: string[] = [];
     for (const sName of slideNames) {
       const xml = await zip.files[sName].async('text');
@@ -22,10 +26,22 @@ export async function extractTextFromPptxFile(file: File): Promise<string[]> {
       if (typeof DOMParser !== 'undefined') {
         const parser = new DOMParser();
         const xmlDoc = parser.parseFromString(xml, 'text/xml');
-        const textNodes = xmlDoc.getElementsByTagName('a:t');
-        for (let i = 0; i < textNodes.length; i++) {
-          const text = textNodes[i].textContent?.trim();
-          if (text) lines.push(text);
+        const paragraphs = xmlDoc.getElementsByTagName('a:p');
+        if (paragraphs.length > 0) {
+          for (let i = 0; i < paragraphs.length; i++) {
+            const tNodes = paragraphs[i].getElementsByTagName('a:t');
+            let paraLine = '';
+            for (let j = 0; j < tNodes.length; j++) {
+              paraLine += tNodes[j].textContent || '';
+            }
+            if (paraLine.trim()) lines.push(paraLine.trim());
+          }
+        } else {
+          const textNodes = xmlDoc.getElementsByTagName('a:t');
+          for (let i = 0; i < textNodes.length; i++) {
+            const text = textNodes[i].textContent?.trim();
+            if (text) lines.push(text);
+          }
         }
       } else {
         const tMatches = Array.from(xml.matchAll(/<a:t[^>]*>(.*?)<\/a:t>/gs))
@@ -97,6 +113,36 @@ export async function createPresentationBlob(presentationTitle: string, slides: 
   return output as Blob;
 }
 
+function toSafePdfText(input: string): string {
+  return input
+    .replace(/[\u2018\u2019]/g, "'")
+    .replace(/[\u201C\u201D]/g, '"')
+    .replace(/[\u2013\u2014]/g, '-')
+    .replace(/\u2022/g, '*')
+    .replace(/\u2026/g, '...')
+    .replace(/[^\x20-\x7E]/g, '?');
+}
+
+function wrapTextToWidth(text: string, font: PDFFont, fontSize: number, maxWidth: number): string[] {
+  const safe = toSafePdfText(text);
+  if (!safe.trim()) return [''];
+  const words = safe.split(' ');
+  const lines: string[] = [];
+  let current = '';
+
+  for (const word of words) {
+    const candidate = current ? `${current} ${word}` : word;
+    if (font.widthOfTextAtSize(candidate, fontSize) > maxWidth && current) {
+      lines.push(current);
+      current = word;
+    } else {
+      current = candidate;
+    }
+  }
+  if (current) lines.push(current);
+  return lines;
+}
+
 export async function convertSlidesToPdf(_title: string, slides: SlideItem[]): Promise<Uint8Array> {
   const pdfDoc = await PDFDocument.create();
   const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
@@ -113,31 +159,42 @@ export async function convertSlidesToPdf(_title: string, slides: SlideItem[]): P
     for (const el of slide.elements) {
       const elX = (el.x / 100) * width;
       const elY = height - (el.y / 100) * height - (el.height / 100) * height;
-      const elW = (el.width / 100) * width;
+      const elW = Math.max(80, (el.width / 100) * width);
       const elH = (el.height / 100) * height;
 
       if (el.type === 'shape') {
         page.drawRectangle({ x: elX, y: elY, width: elW, height: elH, color: hexToRgb(el.bgColor || '#1e293b') });
       } else if (el.type === 'title') {
-        page.drawText((el.content || '').replace(/[^\x20-\x7E]/g, '?'), {
-          x: elX,
-          y: elY + elH / 2 - (el.fontSize || 28) / 3,
-          size: el.fontSize || 28,
-          font: boldFont,
-          color: hexToRgb(el.fontColor || '#ffffff'),
-        });
-      } else if (el.type === 'text') {
-        const lines = (el.content || '').split('\n');
-        let textY = elY + elH - (el.fontSize || 14);
-        for (const line of lines) {
-          page.drawText(line.replace(/[^\x20-\x7E]/g, '?'), {
+        const size = el.fontSize || 28;
+        const titleLines = (el.content || '').split('\n').flatMap((l) => wrapTextToWidth(l, boldFont, size, elW));
+        let textY = elY + elH - size;
+        for (const line of titleLines.slice(0, 3)) {
+          page.drawText(line, {
             x: elX,
             y: textY,
-            size: el.fontSize || 14,
-            font,
-            color: hexToRgb(el.fontColor || '#cbd5e1'),
+            size,
+            font: boldFont,
+            color: hexToRgb(el.fontColor || '#ffffff'),
           });
-          textY -= (el.fontSize || 14) * 1.4;
+          textY -= size * 1.25;
+        }
+      } else if (el.type === 'text') {
+        const size = el.fontSize || 16;
+        const rawLines = (el.content || '').split('\n');
+        let textY = elY + elH - size;
+        for (const rawLine of rawLines) {
+          const wrapped = wrapTextToWidth(rawLine, font, size, elW);
+          for (const line of wrapped) {
+            if (textY < 45) break;
+            page.drawText(line, {
+              x: elX,
+              y: textY,
+              size,
+              font,
+              color: hexToRgb(el.fontColor || '#cbd5e1'),
+            });
+            textY -= size * 1.4;
+          }
         }
       }
     }
@@ -147,7 +204,7 @@ export async function convertSlidesToPdf(_title: string, slides: SlideItem[]): P
       y: 20,
       size: 11,
       font,
-      color: rgb(0.5, 0.5, 0.6),
+      color: rgb(0.65, 0.7, 0.8),
     });
   }
 

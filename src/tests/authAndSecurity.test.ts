@@ -26,11 +26,20 @@ describe('Auth, Security & Session Management', () => {
   });
 
   it('enforces HTTPS for staging and production URLs while permitting local dev hosts', () => {
+    expect(validateApiUrl('', 'production').valid).toBe(false);
+    expect(validateApiUrl('ftp://files.example.com/api/v1', 'production').valid).toBe(false);
     expect(validateApiUrl('http://evil.example.com/api/v1', 'production').valid).toBe(false);
     expect(validateApiUrl('http://10.0.2.2:8000/api/v1', 'staging').valid).toBe(false);
-    expect(validateApiUrl('https://omnidoc-studio-jet.vercel.app/api/v1', 'production').valid).toBe(true);
+    expect(validateApiUrl('https://omnidoc-studio-jet.vercel.app/', 'production')).toEqual({
+      valid: true,
+      normalized: 'https://omnidoc-studio-jet.vercel.app/api/v1',
+    });
     expect(validateApiUrl('http://10.0.2.2:8000/api/v1', 'development').valid).toBe(true);
     expect(validateApiUrl('http://localhost:8000/api/v1', 'development').valid).toBe(true);
+    expect(validateApiUrl('http://127.0.0.1:8000', 'development')).toEqual({
+      valid: true,
+      normalized: 'http://127.0.0.1:8000/api/v1',
+    });
   });
 
   it('stores and clears JWT session metadata securely without leaking across logout', async () => {
@@ -56,9 +65,13 @@ describe('Auth, Security & Session Management', () => {
     expect(await secureStorage.getSessionMeta()).toBeNull();
   });
 
-  it('detects expired JWT tokens accurately', () => {
+  it('detects expired JWT tokens and rejects malformed JWT payloads safely', () => {
     const expired = makeJwt(-120);
+    const expiringInsideSkew = makeJwt(15);
     expect(isJwtExpired(expired)).toBe(true);
+    expect(isJwtExpired(expiringInsideSkew, 30)).toBe(true);
+    expect(isJwtExpired(expiringInsideSkew, 5)).toBe(false);
+    expect(parseJwtPayload('not-a-jwt')).toBeNull();
   });
 
   it('handles 401 session expiration globally by purging token and invoking handler', async () => {
@@ -103,7 +116,7 @@ describe('Auth, Security & Session Management', () => {
     expect(await secureStorage.getToken()).toBe(newToken);
   });
 
-  it('passes mandatory 2026.1 consent flags during registration and authenticates admin/user routes', async () => {
+  it('passes mandatory 2026.1 consent flags during registration and validates token shapes', async () => {
     const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
       new Response(JSON.stringify({ id: 'u-reg', email: 'new@example.com' }), { status: 201 })
     );
@@ -122,5 +135,40 @@ describe('Auth, Security & Session Management', () => {
     expect(body.terms_version).toBe('2026.1');
     expect(body.privacy_version).toBe('2026.1');
     expect(body.ai_consent_version).toBe('2026.1');
+  });
+
+  it('deduplicates rapid identical mutations and supports renameProject PATCH with version guard', async () => {
+    apiClient.setToken(makeJwt(3600));
+    let callCount = 0;
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async () => {
+      callCount += 1;
+      await new Promise((r) => setTimeout(r, 15));
+      return new Response(
+        JSON.stringify({
+          id: 'proj-1',
+          org_id: 'org-1',
+          owner_user_id: 'user-123',
+          title: 'Renamed Deck',
+          project_type: 'slides',
+          version: 2,
+          size_bytes: 512,
+          content_hash_sha256: 'hash',
+          tags: [],
+          is_deleted: false,
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        }),
+        { status: 200 }
+      );
+    });
+
+    const [first, second] = await Promise.all([
+      apiClient.renameProject('proj-1', 'Renamed Deck', 1),
+      apiClient.renameProject('proj-1', 'Renamed Deck', 1),
+    ]);
+    expect(callCount).toBe(1);
+    expect(first.title).toBe('Renamed Deck');
+    expect(second.version).toBe(2);
+    await expect(apiClient.renameProject('proj-1', '   ')).rejects.toBeInstanceOf(ApiError);
   });
 });

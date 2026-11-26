@@ -1,7 +1,7 @@
 import JSZip from 'jszip';
 import { ConversionJob, ConversionOptions, FileFormat } from '../types';
 import { FORMAT_REGISTRY, validateFileFormat } from './formatDetector';
-import { extractTextFromPdf, renderPdfPagesToImages } from './pdfService';
+import { compressPdf, extractTextFromPdf, renderPdfPagesToImages } from './pdfService';
 import { convertTextOrDocxToPdf, createDocxBlob, extractTextFromDocxFile, DocxContentItem } from './docxService';
 import { convertSpreadsheetToPdf, exportDataToCsvBlob, exportDataToXlsxBlob, parseSpreadsheetFile } from './sheetService';
 import { convertImageFormat, convertImageToPdf } from './imageService';
@@ -11,6 +11,14 @@ export interface ConversionResult {
   blob: Blob;
   fileName: string;
   mimeType: string;
+}
+
+export interface ConversionCompatibilityReport {
+  supported: boolean;
+  fidelity: 'native' | 'extraction' | 'rasterized' | 'unsupported';
+  label: string;
+  summary: string;
+  caveats: string[];
 }
 
 export function escapeHtml(str: string): string {
@@ -65,6 +73,20 @@ export async function executeFileConversion(
   checkAborted();
 
   if (sourceFormat === targetFormat) {
+    if (sourceFormat === 'pdf') {
+      updateProgress(45, 'Optimizing PDF object streams...');
+      const arrayBuffer = await file.arrayBuffer();
+      checkAborted();
+      const optimizedBytes = await compressPdf(arrayBuffer);
+      checkAborted();
+      updateProgress(100, 'PDF optimization completed');
+      return {
+        blob: new Blob([optimizedBytes as any], { type: 'application/pdf' }),
+        fileName: `${baseName}_optimized.pdf`,
+        mimeType: 'application/pdf',
+      };
+    }
+
     updateProgress(100, 'Format match; ready');
     return {
       blob: file,
@@ -80,6 +102,7 @@ export async function executeFileConversion(
     if (targetFormat === 'txt') {
       updateProgress(45, 'Extracting selectable text from PDF...');
       const text = await extractTextFromPdf(arrayBuffer);
+      checkAborted();
       updateProgress(100, 'Text extracted');
       return { blob: new Blob([text], { type: 'text/plain;charset=utf-8' }), fileName: `${baseName}.txt`, mimeType: 'text/plain' };
     }
@@ -87,9 +110,11 @@ export async function executeFileConversion(
     if (targetFormat === 'docx') {
       updateProgress(40, 'Extracting text stream...');
       const text = await extractTextFromPdf(arrayBuffer);
+      checkAborted();
       const paragraphs: DocxContentItem[] = text.split('\n\n').filter(Boolean).map((p) => ({ type: 'paragraph', text: p }));
       updateProgress(75, 'Building DOCX package...');
       const docxBlob = await createDocxBlob(baseName, paragraphs);
+      checkAborted();
       updateProgress(100, 'DOCX ready');
       return { blob: docxBlob, fileName: `${baseName}.docx`, mimeType: FORMAT_REGISTRY.docx.mimeType };
     }
@@ -97,6 +122,7 @@ export async function executeFileConversion(
     if (targetFormat === 'pptx') {
       updateProgress(40, 'Extracting PDF pages...');
       const text = await extractTextFromPdf(arrayBuffer);
+      checkAborted();
       const pages = text.split(/--- Page \d+ ---/).filter((p) => p.trim());
       const slides = (pages.length > 0 ? pages : [text]).map((pageText, idx) => {
         const lines = pageText.trim().split('\n').filter(Boolean);
@@ -114,6 +140,7 @@ export async function executeFileConversion(
         };
       });
       const pptxBlob = await createPresentationBlob(baseName, slides);
+      checkAborted();
       updateProgress(100, 'PPTX ready');
       return { blob: pptxBlob, fileName: `${baseName}.pptx`, mimeType: FORMAT_REGISTRY.pptx.mimeType };
     }
@@ -121,6 +148,7 @@ export async function executeFileConversion(
     if (targetFormat === 'png' || targetFormat === 'jpg') {
       updateProgress(35, 'Rendering PDF pages to images...');
       const imageBlobs = await renderPdfPagesToImages(arrayBuffer, targetFormat === 'png' ? 'png' : 'jpeg');
+      checkAborted();
       if (imageBlobs.length === 1) {
         updateProgress(100, 'Rendered page image');
         return { blob: imageBlobs[0], fileName: `${baseName}.${targetFormat}`, mimeType: targetFormat === 'png' ? 'image/png' : 'image/jpeg' };
@@ -128,6 +156,7 @@ export async function executeFileConversion(
       const zip = new JSZip();
       imageBlobs.forEach((b, idx) => zip.file(`${baseName}_page_${idx + 1}.${targetFormat}`, b));
       const zipBlob = await zip.generateAsync({ type: 'blob' });
+      checkAborted();
       updateProgress(100, 'Packaged pages ZIP');
       return { blob: zipBlob, fileName: `${baseName}_pages.zip`, mimeType: 'application/zip' };
     }
@@ -140,6 +169,7 @@ export async function executeFileConversion(
     if (targetFormat === 'pdf') {
       updateProgress(70, 'Rendering PDF...');
       const pdfBytes = await convertTextOrDocxToPdf(baseName, rawText);
+      checkAborted();
       updateProgress(100, 'PDF ready');
       return { blob: new Blob([pdfBytes as any], { type: 'application/pdf' }), fileName: `${baseName}.pdf`, mimeType: 'application/pdf' };
     }
@@ -161,6 +191,7 @@ export async function executeFileConversion(
   if (sourceFormat === 'pptx') {
     updateProgress(35, 'Parsing PPTX slides...');
     const slideTexts = await extractTextFromPptxFile(file);
+    checkAborted();
     if (targetFormat === 'txt') {
       const combined = slideTexts.map((st, i) => `--- Slide ${i + 1} ---\n${st}`).join('\n\n');
       updateProgress(100, 'Text extracted');
@@ -173,10 +204,11 @@ export async function executeFileConversion(
         st.split('\n').filter(Boolean).forEach((line) => paragraphs.push({ type: 'paragraph', text: line }));
       });
       const docxBlob = await createDocxBlob(baseName, paragraphs);
+      checkAborted();
       updateProgress(100, 'DOCX ready');
       return { blob: docxBlob, fileName: `${baseName}.docx`, mimeType: FORMAT_REGISTRY.docx.mimeType };
     }
-    if (targetFormat === 'pdf') {
+    if (targetFormat === 'pdf' || targetFormat === 'png' || targetFormat === 'jpg') {
       const slides = slideTexts.map((st, idx) => {
         const lines = st.split('\n').filter(Boolean);
         return {
@@ -191,8 +223,23 @@ export async function executeFileConversion(
         };
       });
       const pdfBytes = await convertSlidesToPdf(baseName, slides);
-      updateProgress(100, 'PDF ready');
-      return { blob: new Blob([pdfBytes as any], { type: 'application/pdf' }), fileName: `${baseName}.pdf`, mimeType: 'application/pdf' };
+      checkAborted();
+      if (targetFormat === 'pdf') {
+        updateProgress(100, 'PDF ready');
+        return { blob: new Blob([pdfBytes as any], { type: 'application/pdf' }), fileName: `${baseName}.pdf`, mimeType: 'application/pdf' };
+      }
+      updateProgress(70, 'Rendering slide images...');
+      const images = await renderPdfPagesToImages(pdfBytes, targetFormat === 'png' ? 'png' : 'jpeg');
+      checkAborted();
+      if (images.length === 1) {
+        updateProgress(100, 'Slide image ready');
+        return { blob: images[0], fileName: `${baseName}.${targetFormat}`, mimeType: targetFormat === 'png' ? 'image/png' : 'image/jpeg' };
+      }
+      const zip = new JSZip();
+      images.forEach((imgBlob, idx) => zip.file(`${baseName}_slide_${idx + 1}.${targetFormat}`, imgBlob));
+      const zipBlob = await zip.generateAsync({ type: 'blob' });
+      updateProgress(100, 'Packaged slides ZIP');
+      return { blob: zipBlob, fileName: `${baseName}_slides.zip`, mimeType: 'application/zip' };
     }
   }
 
@@ -210,6 +257,7 @@ export async function executeFileConversion(
     }
     if (targetFormat === 'pdf') {
       const pdfBytes = await convertSpreadsheetToPdf(parsed.data, baseName);
+      checkAborted();
       updateProgress(100, 'PDF exported');
       return { blob: new Blob([pdfBytes as any], { type: 'application/pdf' }), fileName: `${baseName}.pdf`, mimeType: 'application/pdf' };
     }
@@ -239,12 +287,14 @@ export async function executeFileConversion(
         pageSize: options?.pageOrientation ? 'A4' : 'fit',
         orientation: options?.pageOrientation,
       });
+      checkAborted();
       updateProgress(100, 'PDF ready');
       return { blob: new Blob([pdfBytes as any], { type: 'application/pdf' }), fileName: `${baseName}.pdf`, mimeType: 'application/pdf' };
     }
     if (['png', 'jpg', 'webp'].includes(targetFormat)) {
       updateProgress(55, `Transcoding to ${targetFormat.toUpperCase()}...`);
       const blob = await convertImageFormat(file, targetFormat as 'png' | 'jpg' | 'webp', options?.quality ?? 0.92);
+      checkAborted();
       updateProgress(100, 'Image converted');
       return { blob, fileName: `${baseName}.${targetFormat}`, mimeType: FORMAT_REGISTRY[targetFormat].mimeType };
     }
@@ -256,12 +306,14 @@ export async function executeFileConversion(
     if (targetFormat === 'pdf') {
       updateProgress(65, 'Rendering PDF...');
       const pdfBytes = await convertTextOrDocxToPdf(baseName, rawText);
+      checkAborted();
       updateProgress(100, 'PDF ready');
       return { blob: new Blob([pdfBytes as any], { type: 'application/pdf' }), fileName: `${baseName}.pdf`, mimeType: 'application/pdf' };
     }
     if (targetFormat === 'docx') {
       const paragraphs: DocxContentItem[] = rawText.split('\n\n').filter(Boolean).map((p) => ({ type: 'paragraph', text: p }));
       const docxBlob = await createDocxBlob(baseName, paragraphs);
+      checkAborted();
       updateProgress(100, 'DOCX ready');
       return { blob: docxBlob, fileName: `${baseName}.docx`, mimeType: FORMAT_REGISTRY.docx.mimeType };
     }
@@ -283,12 +335,109 @@ export async function executeFileConversion(
   throw new Error(`Unsupported conversion route: ${sourceFormat.toUpperCase()} to ${targetFormat.toUpperCase()}`);
 }
 
+/**
+ * Package multiple completed conversion jobs into a single compressed ZIP archive,
+ * deduplicating colliding output filenames across batch items.
+ */
 export async function createBatchZipArchive(jobs: ConversionJob[]): Promise<Blob> {
-  const zip = new JSZip();
-  for (const job of jobs) {
-    if (job.status === 'completed' && job.resultBlob) {
-      zip.file(job.resultFileName || `${job.sourceFile.name}.${job.targetFormat}`, job.resultBlob);
-    }
+  const completed = jobs.filter((job) => job.status === 'completed' && job.resultBlob);
+  if (completed.length === 0) {
+    throw new Error('No completed conversion outputs are ready to package.');
   }
-  return await zip.generateAsync({ type: 'blob' });
+
+  const zip = new JSZip();
+  const usedNames = new Map<string, number>();
+
+  for (const job of completed) {
+    const rawName = job.resultFileName || `${job.sourceFile.name}.${job.targetFormat}`;
+    const count = usedNames.get(rawName) || 0;
+    usedNames.set(rawName, count + 1);
+
+    let uniqueName = rawName;
+    if (count > 0) {
+      const dotIdx = rawName.lastIndexOf('.');
+      uniqueName =
+        dotIdx > 0
+          ? `${rawName.slice(0, dotIdx)}_${count + 1}${rawName.slice(dotIdx)}`
+          : `${rawName}_${count + 1}`;
+    }
+
+    zip.file(uniqueName, job.resultBlob!);
+  }
+
+  return await zip.generateAsync({
+    type: 'blob',
+    compression: 'DEFLATE',
+    compressionOptions: { level: 6 },
+  });
+}
+
+/**
+ * Explains conversion fidelity and potential formatting trade-offs before execution.
+ */
+export function getConversionCompatibilityReport(
+  sourceFormat: FileFormat,
+  targetFormat: FileFormat
+): ConversionCompatibilityReport {
+  if (sourceFormat === targetFormat) {
+    return {
+      supported: true,
+      fidelity: 'native',
+      label: sourceFormat === 'pdf' ? 'Optimize PDF Streams' : 'Exact Passthrough',
+      summary: 'Preserves original document structure and content.',
+      caveats: sourceFormat === 'pdf' ? ['Re-saves PDF with compressed object streams.'] : [],
+    };
+  }
+
+  const allowed = FORMAT_REGISTRY[sourceFormat]?.allowedConversions || [];
+  if (!allowed.includes(targetFormat)) {
+    return {
+      supported: false,
+      fidelity: 'unsupported',
+      label: 'Unsupported Route',
+      summary: `Direct conversion from ${sourceFormat.toUpperCase()} to ${targetFormat.toUpperCase()} is not supported.`,
+      caveats: ['Choose a compatible destination format from the Conversion Matrix.'],
+    };
+  }
+
+  if (['png', 'jpg', 'webp'].includes(sourceFormat) && ['png', 'jpg', 'webp', 'pdf'].includes(targetFormat)) {
+    return {
+      supported: true,
+      fidelity: 'native',
+      label: 'High-Fidelity Raster',
+      summary: 'Direct pixel transcoding or embedded image PDF generation.',
+      caveats: targetFormat === 'jpg' ? ['JPG does not support alpha transparency (transparent areas become solid).'] : [],
+    };
+  }
+
+  if (['xlsx', 'csv'].includes(sourceFormat) && ['xlsx', 'csv', 'html'].includes(targetFormat)) {
+    return {
+      supported: true,
+      fidelity: 'native',
+      label: 'Tabular Structure Preserved',
+      summary: 'Cell values and tabular rows/columns map cleanly across formats.',
+      caveats: targetFormat === 'csv' ? ['CSV exports the active sheet values without formulas or multi-tab styling.'] : [],
+    };
+  }
+
+  if (targetFormat === 'png' || targetFormat === 'jpg' || targetFormat === 'webp') {
+    return {
+      supported: true,
+      fidelity: 'rasterized',
+      label: 'Visual Rasterization',
+      summary: 'Pages or slides are rendered into high-DPI images packaged as a ZIP when multi-page.',
+      caveats: ['Output is rasterized; text will no longer be selectable.'],
+    };
+  }
+
+  return {
+    supported: true,
+    fidelity: 'extraction',
+    label: 'Structure & Text Extraction',
+    summary: `Extracts text, headings, and tabular content from ${sourceFormat.toUpperCase()} into ${targetFormat.toUpperCase()}.`,
+    caveats: [
+      'Complex multi-column layouts, custom embedded fonts, or animations may be simplified.',
+      sourceFormat === 'pdf' ? 'Scanned image-only PDFs contain no selectable text stream.' : '',
+    ].filter(Boolean),
+  };
 }

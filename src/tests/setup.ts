@@ -1,3 +1,4 @@
+import { cleanup } from '@testing-library/react';
 import { afterEach } from 'vitest';
 
 if (typeof globalThis.DOMMatrix === 'undefined') {
@@ -48,5 +49,5 @@ if (typeof Blob !== 'undefined' && typeof Blob.prototype.text !== 'function') {
 }
 
 afterEach(() => {
-  // Keep global mocks clean between tests
+  cleanup();
 });

@@ -1,71 +1,104 @@
 import React from 'react';
-import { ChevronRight, FileSpreadsheet, FileText, Repeat, Sparkles } from 'lucide-react';
-import { MobileSubView } from '../types';
+import {
+  ChevronRight,
+  FileSpreadsheet,
+  FileText,
+  PenTool,
+  Presentation,
+  Repeat,
+  Sparkles,
+} from 'lucide-react';
+import { MobileSubView, MobileTab } from '../types';
 
 interface StudiosHubScreenProps {
+  onNavigateTab: (tab: MobileTab) => void;
   onOpenSubView: (view: MobileSubView) => void;
 }
 
-export const StudiosHubScreen: React.FC<StudiosHubScreenProps> = ({ onOpenSubView }) => {
+export const StudiosHubScreen: React.FC<StudiosHubScreenProps> = ({ onNavigateTab, onOpenSubView }) => {
   const studios: Array<{
-    id: MobileSubView;
+    key: string;
     title: string;
     subtitle: string;
     badge: string;
     icon: React.ReactNode;
     accent: string;
+    onOpen: () => void;
   }> = [
     {
-      id: 'pdf_studio',
+      key: 'pdf',
       title: 'PDF Studio',
-      subtitle: 'View pages, merge, split, rotate, watermark, extract text & scan camera photos to PDF.',
+      subtitle: 'Zoomable page viewer, search, reorder, merge, split, rotate, visual annotations & camera scan.',
       badge: 'Offline + Cloud',
       icon: <FileText className="w-6 h-6 text-rose-400" />,
       accent: 'border-rose-500/30 bg-rose-500/10',
+      onOpen: () => onNavigateTab('pdf'),
     },
     {
-      id: 'conversion_studio',
-      title: 'Conversion Studio',
-      subtitle: 'Convert PDF, DOCX, PPTX, XLSX, CSV, PNG, JPG, WEBP, TXT, HTML & MD on-device or via backend.',
-      badge: '11 Formats',
-      icon: <Repeat className="w-6 h-6 text-amber-400" />,
-      accent: 'border-amber-500/30 bg-amber-500/10',
+      key: 'word_studio',
+      title: 'Word Document Studio',
+      subtitle: 'Create & edit rich DOCX documents, formatting toolbar, find & replace, export DOCX/PDF/TXT/HTML.',
+      badge: 'DOCX Engine',
+      icon: <PenTool className="w-6 h-6 text-sky-400" />,
+      accent: 'border-sky-500/30 bg-sky-500/10',
+      onOpen: () => onOpenSubView('word_studio'),
     },
     {
-      id: 'sheets_studio',
+      key: 'slides_studio',
+      title: 'PowerPoint Slides Studio',
+      subtitle: 'Build decks with themes, reorder slides, touch Presentation Mode & export PPTX/PDF.',
+      badge: 'PPTX Engine',
+      icon: <Presentation className="w-6 h-6 text-orange-400" />,
+      accent: 'border-orange-500/30 bg-orange-500/10',
+      onOpen: () => onOpenSubView('slides_studio'),
+    },
+    {
+      key: 'sheets_studio',
       title: 'Excel Sheets Studio',
-      subtitle: 'Edit spreadsheets with formula bar (=SUM, =AVERAGE, =IF), sort, deduplicate & export XLSX/CSV/PDF.',
+      subtitle: 'Multi-sheet spreadsheet with formulas (=SUM, =AVERAGE, =IF), sort, deduplicate & XLSX/CSV/PDF export.',
       badge: 'Formula Engine',
       icon: <FileSpreadsheet className="w-6 h-6 text-emerald-400" />,
       accent: 'border-emerald-500/30 bg-emerald-500/10',
+      onOpen: () => onOpenSubView('sheets_studio'),
     },
     {
-      id: 'ai_assistant',
+      key: 'convert',
+      title: 'Batch Conversion Studio',
+      subtitle: 'Multi-file queue across 11 formats with compatibility ratings, on-device or cloud conversion & ZIP batch.',
+      badge: '11 Formats',
+      icon: <Repeat className="w-6 h-6 text-amber-400" />,
+      accent: 'border-amber-500/30 bg-amber-500/10',
+      onOpen: () => onNavigateTab('convert'),
+    },
+    {
+      key: 'ai_assistant',
       title: 'AI Document Assistant',
       subtitle: 'Ask grounded RAG questions across indexed vault documents or execute OmniCore agents.',
       badge: 'RAG + Agents',
       icon: <Sparkles className="w-6 h-6 text-violet-400" />,
       accent: 'border-violet-500/30 bg-violet-500/10',
+      onOpen: () => onOpenSubView('ai_assistant'),
     },
   ];
 
   return (
-    <div className="space-y-3 pb-4">
+    <div className="space-y-3 pb-6">
       <p className="text-xs text-slate-400">
         Dedicated mobile-optimized studios powered by OmniDoc engines and shared cloud APIs.
       </p>
       {studios.map((s) => (
         <button
-          key={s.id}
-          onClick={() => onOpenSubView(s.id)}
+          key={s.key}
+          type="button"
+          onClick={s.onOpen}
           className="w-full bg-slate-900 border border-slate-800 rounded-2xl p-4 flex items-center gap-3.5 text-left active:bg-slate-800"
         >
           <div className={`w-12 h-12 rounded-2xl border flex items-center justify-center shrink-0 ${s.accent}`}>
             {s.icon}
           </div>
           <div className="flex-1 min-w-0">
-            <div className="flex items-center gap-2">
-              <h3 className="text-sm font-bold">{s.title}</h3>
+            <div className="flex items-center gap-2 flex-wrap">
+              <h3 className="text-sm font-bold text-slate-100">{s.title}</h3>
               <span className="text-[10px] px-2 py-0.5 rounded-full bg-slate-800 text-slate-300 font-medium">
                 {s.badge}
               </span>

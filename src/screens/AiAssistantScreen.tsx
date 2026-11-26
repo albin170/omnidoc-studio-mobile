@@ -73,12 +73,14 @@ export const AiAssistantScreen: React.FC<{ onToast: (type: 'info' | 'success' | 
       <div className="bg-slate-900 border border-slate-800 rounded-2xl p-3 space-y-2.5">
         <div className="grid grid-cols-2 gap-1.5 bg-slate-950 p-1 rounded-xl">
           <button
+            type="button"
             onClick={() => setMode('rag')}
             className={`py-2 rounded-lg text-xs font-semibold ${mode === 'rag' ? 'bg-violet-600 text-white' : 'text-slate-400'}`}
           >
             Document RAG Q&amp;A
           </button>
           <button
+            type="button"
             onClick={() => setMode('agent')}
             className={`py-2 rounded-lg text-xs font-semibold ${mode === 'agent' ? 'bg-violet-600 text-white' : 'text-slate-400'}`}
           >
@@ -86,23 +88,30 @@ export const AiAssistantScreen: React.FC<{ onToast: (type: 'info' | 'success' | 
           </button>
         </div>
 
-        <select
-          value={selectedDocId}
-          onChange={(e) => setSelectedDocId(e.target.value)}
-          className="w-full h-10 px-3 rounded-xl bg-slate-950 border border-slate-800 text-xs"
-        >
-          <option value="">All Vault Documents</option>
-          {docs.map((d) => (
-            <option key={d.id} value={d.id}>
-              {d.filename}
-            </option>
-          ))}
-        </select>
+        <div>
+          <label htmlFor="ai-doc-select" className="sr-only">
+            Target document
+          </label>
+          <select
+            id="ai-doc-select"
+            name="targetDocument"
+            value={selectedDocId}
+            onChange={(e) => setSelectedDocId(e.target.value)}
+            className="w-full h-10 px-3 rounded-xl bg-slate-950 border border-slate-800 text-xs text-slate-100 focus:border-violet-500 focus:outline-none"
+          >
+            <option value="">All Vault Documents</option>
+            {docs.map((d) => (
+              <option key={d.id} value={d.id}>
+                {d.filename}
+              </option>
+            ))}
+          </select>
+        </div>
       </div>
 
       <div className="space-y-2.5 min-h-[240px]">
         {messages.length === 0 ? (
-          <div className="bg-slate-900/60 border border-slate-800 rounded-2xl p-6 text-center text-xs text-slate-400">
+          <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 text-center text-xs text-slate-400">
             <Sparkles className="w-7 h-7 mx-auto mb-2 text-violet-400" />
             Ask a question about your uploaded documents or trigger an OmniCore agent analysis.
           </div>
@@ -124,17 +133,23 @@ export const AiAssistantScreen: React.FC<{ onToast: (type: 'info' | 'success' | 
       </div>
 
       <form onSubmit={handleSend} className="flex gap-2">
+        <label htmlFor="ai-prompt-input" className="sr-only">
+          Prompt
+        </label>
         <input
+          id="ai-prompt-input"
+          name="prompt"
           type="text"
           value={prompt}
           onChange={(e) => setPrompt(e.target.value)}
           placeholder={mode === 'rag' ? 'Ask about this document...' : 'Give agent an objective...'}
-          className="flex-1 h-11 px-3.5 rounded-xl bg-slate-900 border border-slate-800 text-sm focus:border-violet-500 focus:outline-none"
+          className="flex-1 h-11 px-3.5 rounded-xl bg-slate-900 border border-slate-800 text-sm text-slate-100 focus:border-violet-500 focus:outline-none"
         />
         <button
           type="submit"
           disabled={busy || !prompt.trim()}
-          className="w-11 h-11 rounded-xl bg-violet-600 text-white flex items-center justify-center disabled:opacity-50"
+          aria-label="Send prompt"
+          className="w-11 h-11 rounded-xl bg-violet-600 hover:bg-violet-500 text-white flex items-center justify-center disabled:opacity-50"
         >
           <Send className="w-4 h-4" />
         </button>

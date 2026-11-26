@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { Activity, RefreshCw, Search, ShieldAlert, UserCheck, UserX } from 'lucide-react';
+import { ConfirmDialog } from '../components/ConfirmDialog';
 import { useAuth } from '../context/AuthContext';
 import { formatFileSize } from '../engines/formatDetector';
 import { apiClient } from '../services/apiClient';
@@ -15,6 +16,8 @@ export const AdminScreen: React.FC<{ onToast: (type: 'info' | 'success' | 'error
   const [banner, setBanner] = useState('');
   const [maintenance, setMaintenance] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [suspendTarget, setSuspendTarget] = useState<any | null>(null);
+  const [suspending, setSuspending] = useState(false);
 
   const loadAdminData = useCallback(async () => {
     if (!isAdmin || !isOnline) return;
@@ -44,6 +47,21 @@ export const AdminScreen: React.FC<{ onToast: (type: 'info' | 'success' | 'error
     loadAdminData();
   }, [loadAdminData]);
 
+  const handleConfirmSuspend = async () => {
+    if (!suspendTarget) return;
+    setSuspending(true);
+    try {
+      await apiClient.suspendUser(suspendTarget.id, 'Suspended from mobile admin console');
+      onToast('success', `Suspended ${suspendTarget.email}.`);
+      setSuspendTarget(null);
+      await loadAdminData();
+    } catch (err: any) {
+      onToast('error', err?.message || 'Failed to suspend user');
+    } finally {
+      setSuspending(false);
+    }
+  };
+
   if (!isAdmin) {
     return (
       <div className="bg-rose-950/50 border border-rose-500/40 rounded-2xl p-6 text-center space-y-2">
@@ -62,7 +80,12 @@ export const AdminScreen: React.FC<{ onToast: (type: 'info' | 'success' | 'error
         <h2 className="text-sm font-bold flex items-center gap-2 text-amber-300">
           <Activity className="w-4 h-4" /> Platform Telemetry
         </h2>
-        <button onClick={loadAdminData} className="w-9 h-9 rounded-xl bg-slate-800 flex items-center justify-center">
+        <button
+          type="button"
+          onClick={loadAdminData}
+          aria-label="Refresh admin telemetry"
+          className="w-9 h-9 rounded-xl bg-slate-900 border border-slate-800 flex items-center justify-center text-slate-200"
+        >
           <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
         </button>
       </div>
@@ -70,15 +93,15 @@ export const AdminScreen: React.FC<{ onToast: (type: 'info' | 'success' | 'error
       {telemetry && (
         <div className="grid grid-cols-2 gap-2.5 text-center">
           <div className="bg-slate-900 border border-slate-800 rounded-2xl p-3">
-            <p className="text-lg font-bold">{telemetry.total_users}</p>
+            <p className="text-lg font-bold text-slate-100">{telemetry.total_users}</p>
             <p className="text-[11px] text-slate-400">Users ({telemetry.active_users} active)</p>
           </div>
           <div className="bg-slate-900 border border-slate-800 rounded-2xl p-3">
-            <p className="text-lg font-bold">{telemetry.total_documents}</p>
+            <p className="text-lg font-bold text-slate-100">{telemetry.total_documents}</p>
             <p className="text-[11px] text-slate-400">{formatFileSize(telemetry.total_storage_bytes)}</p>
           </div>
           <div className="bg-slate-900 border border-slate-800 rounded-2xl p-3">
-            <p className="text-lg font-bold">{telemetry.total_jobs}</p>
+            <p className="text-lg font-bold text-slate-100">{telemetry.total_jobs}</p>
             <p className="text-[11px] text-slate-400">Jobs ({telemetry.failed_jobs} failed)</p>
           </div>
           <div className="bg-slate-900 border border-slate-800 rounded-2xl p-3">
@@ -91,18 +114,32 @@ export const AdminScreen: React.FC<{ onToast: (type: 'info' | 'success' | 'error
       {/* Global UI Banner & Maintenance */}
       <div className="bg-slate-900 border border-slate-800 rounded-2xl p-3.5 space-y-2.5">
         <h3 className="text-xs font-semibold text-slate-300">Global Announcement &amp; Maintenance</h3>
-        <input
-          type="text"
-          value={banner}
-          onChange={(e) => setBanner(e.target.value)}
-          placeholder="System-wide banner text"
-          className="w-full h-10 px-3 rounded-xl bg-slate-950 border border-slate-800 text-xs"
-        />
-        <label className="flex items-center justify-between text-xs">
+        <div>
+          <label htmlFor="admin-banner" className="sr-only">
+            System-wide banner text
+          </label>
+          <input
+            id="admin-banner"
+            name="announcementBanner"
+            type="text"
+            value={banner}
+            onChange={(e) => setBanner(e.target.value)}
+            placeholder="System-wide banner text"
+            className="w-full h-10 px-3 rounded-xl bg-slate-950 border border-slate-800 text-xs text-slate-100 focus:border-indigo-500 focus:outline-none"
+          />
+        </div>
+        <label htmlFor="admin-maintenance" className="flex items-center justify-between text-xs text-slate-200 cursor-pointer">
           <span>Maintenance Mode</span>
-          <input type="checkbox" checked={maintenance} onChange={(e) => setMaintenance(e.target.checked)} />
+          <input
+            id="admin-maintenance"
+            name="maintenanceMode"
+            type="checkbox"
+            checked={maintenance}
+            onChange={(e) => setMaintenance(e.target.checked)}
+          />
         </label>
         <button
+          type="button"
           onClick={async () => {
             try {
               await apiClient.updateAdminUiConfig({ announcement_banner: banner, maintenance_mode: maintenance });
@@ -111,7 +148,7 @@ export const AdminScreen: React.FC<{ onToast: (type: 'info' | 'success' | 'error
               onToast('error', err?.message || 'Update failed');
             }
           }}
-          className="w-full h-10 rounded-xl bg-amber-600 text-xs font-semibold text-white"
+          className="w-full h-10 rounded-xl bg-amber-600 hover:bg-amber-500 text-xs font-semibold text-white"
         >
           Publish System Config
         </button>
@@ -121,40 +158,49 @@ export const AdminScreen: React.FC<{ onToast: (type: 'info' | 'success' | 'error
       <div className="space-y-2">
         <div className="relative">
           <Search className="w-4 h-4 text-slate-500 absolute left-3 top-3" />
+          <label htmlFor="admin-user-search" className="sr-only">
+            Filter users by email
+          </label>
           <input
+            id="admin-user-search"
+            name="userSearch"
             type="text"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             placeholder="Filter users by email..."
-            className="w-full h-10 pl-9 pr-3 rounded-xl bg-slate-900 border border-slate-800 text-xs"
+            className="w-full h-10 pl-9 pr-3 rounded-xl bg-slate-900 border border-slate-800 text-xs text-slate-100 focus:border-indigo-500 focus:outline-none"
           />
         </div>
 
         {users.map((u) => (
           <div key={u.id} className="bg-slate-900 border border-slate-800 rounded-xl p-3 flex items-center justify-between gap-2">
             <div className="min-w-0">
-              <p className="text-xs font-semibold truncate">{u.email}</p>
+              <p className="text-xs font-semibold text-slate-100 truncate">{u.email}</p>
               <p className="text-[11px] text-slate-400">
                 {u.role} · {u.plan_tier} · {u.documents_count} docs
               </p>
             </div>
             {u.is_active ? (
               <button
-                onClick={async () => {
-                  await apiClient.suspendUser(u.id, 'Suspended from mobile admin console');
-                  await loadAdminData();
-                }}
-                className="px-2.5 py-1.5 rounded-lg bg-rose-500/15 text-rose-300 text-[11px] flex items-center gap-1"
+                type="button"
+                onClick={() => setSuspendTarget(u)}
+                className="px-2.5 py-1.5 rounded-lg bg-rose-500/15 text-rose-300 text-[11px] flex items-center gap-1 shrink-0"
               >
                 <UserX className="w-3.5 h-3.5" /> Suspend
               </button>
             ) : (
               <button
+                type="button"
                 onClick={async () => {
-                  await apiClient.reactivateUser(u.id);
-                  await loadAdminData();
+                  try {
+                    await apiClient.reactivateUser(u.id);
+                    onToast('success', `Reactivated ${u.email}.`);
+                    await loadAdminData();
+                  } catch (err: any) {
+                    onToast('error', err?.message || 'Failed to reactivate user');
+                  }
                 }}
-                className="px-2.5 py-1.5 rounded-lg bg-emerald-500/15 text-emerald-300 text-[11px] flex items-center gap-1"
+                className="px-2.5 py-1.5 rounded-lg bg-emerald-500/15 text-emerald-300 text-[11px] flex items-center gap-1 shrink-0"
               >
                 <UserCheck className="w-3.5 h-3.5" /> Activate
               </button>
@@ -175,6 +221,21 @@ export const AdminScreen: React.FC<{ onToast: (type: 'info' | 'success' | 'error
           ))}
         </div>
       </div>
+
+      <ConfirmDialog
+        open={Boolean(suspendTarget)}
+        title="Suspend User Account?"
+        message={
+          suspendTarget
+            ? `Suspend ${suspendTarget.email}? They will immediately lose access to the OmniDoc backend until reactivated.`
+            : ''
+        }
+        confirmLabel="Suspend User"
+        danger
+        busy={suspending}
+        onConfirm={handleConfirmSuspend}
+        onCancel={() => !suspending && setSuspendTarget(null)}
+      />
     </div>
   );
 };

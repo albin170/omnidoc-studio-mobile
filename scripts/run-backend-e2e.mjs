@@ -75,19 +75,21 @@ try {
   await waitForHealth();
   console.log('[E2E] Health OK');
 
-  const email = `mobile_e2e_${Date.now()}@example.com`;
+  const ts = Date.now();
+  const email = `mobile_e2e_${ts}@example.com`;
+  const userBEmail = `mobile_e2e_userb_${ts}@example.com`;
   const password = 'MobileE2ePassword123!';
   const newPassword = 'MobileE2ePassword456!';
 
-  // 1. Register
+  // 1. Register User A
   const reg = await api('/auth/register', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       email,
       password,
-      full_name: 'Mobile E2E User',
-      organization_name: 'Mobile E2E Org',
+      full_name: 'Mobile E2E User A',
+      organization_name: 'Mobile E2E Org A',
       terms_accepted: true,
       terms_version: '2026.1',
       privacy_accepted: true,
@@ -98,9 +100,9 @@ try {
     }),
   });
   assert.equal(reg.status, 201, `Register failed: ${reg.raw}`);
-  console.log('[E2E] 1. Register passed');
+  console.log('[E2E] 1. Register User A passed');
 
-  // 2. Login
+  // 2. Login User A
   const loginRes = await api('/auth/login', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -109,7 +111,7 @@ try {
   assert.equal(loginRes.status, 200, `Login failed: ${loginRes.raw}`);
   let token = loginRes.data.access_token;
   assert.ok(token);
-  console.log('[E2E] 2. Login passed');
+  console.log('[E2E] 2. Login User A passed');
 
   // 3. Profile / Auth Me / Usage / Entitlements
   const meRes = await api('/auth/me', { headers: { Authorization: `Bearer ${token}` } });
@@ -148,7 +150,56 @@ try {
   assert.deepEqual(dlBuf, samplePdfBytes);
   console.log('[E2E] 4. Upload, list & download integrity passed');
 
-  // 5. Submit Job + History
+  // 5. Cross-User / Cross-Tenant Isolation (User B vs User A's document)
+  const regB = await api('/auth/register', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      email: userBEmail,
+      password,
+      full_name: 'Mobile E2E User B',
+      organization_name: 'Mobile E2E Org B',
+      terms_accepted: true,
+      terms_version: '2026.1',
+      privacy_accepted: true,
+      privacy_version: '2026.1',
+      ai_consent: true,
+      ai_consent_version: '2026.1',
+      marketing_consent: false,
+    }),
+  });
+  assert.equal(regB.status, 201, `Register User B failed: ${regB.raw}`);
+  const loginB = await api('/auth/login', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email: userBEmail, password }),
+  });
+  assert.equal(loginB.status, 200);
+  const tokenB = loginB.data.access_token;
+  assert.ok(tokenB);
+
+  const userBList = await api('/documents', { headers: { Authorization: `Bearer ${tokenB}` } });
+  assert.equal(userBList.status, 200);
+  assert.equal(userBList.data.some((d) => d.id === uploadedDoc.id), false);
+
+  const userBRead = await api(`/documents/${uploadedDoc.id}`, {
+    headers: { Authorization: `Bearer ${tokenB}` },
+  });
+  assert.ok([403, 404].includes(userBRead.status), `Expected 403/404 on User B read, got ${userBRead.status}`);
+
+  const userBDl = await api(`/documents/${uploadedDoc.id}/download`, {
+    headers: { Authorization: `Bearer ${tokenB}` },
+  });
+  assert.ok([403, 404].includes(userBDl.status), `Expected 403/404 on User B download, got ${userBDl.status}`);
+
+  const userBDel = await api(`/documents/${uploadedDoc.id}`, {
+    method: 'DELETE',
+    headers: { Authorization: `Bearer ${tokenB}` },
+  });
+  assert.ok([403, 404].includes(userBDel.status), `Expected 403/404 on User B delete, got ${userBDel.status}`);
+  console.log('[E2E] 5. Cross-user tenant isolation (read/download/delete blocked 403/404) passed');
+
+  // 6. Submit Job + History
   const jobRes = await api('/jobs', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
@@ -163,9 +214,9 @@ try {
   const jobsList = await api('/jobs', { headers: { Authorization: `Bearer ${token}` } });
   assert.equal(jobsList.status, 200);
   assert.ok(jobsList.data.length >= 1);
-  console.log('[E2E] 5. Jobs & processing history passed');
+  console.log('[E2E] 6. Jobs & processing history passed');
 
-  // 6. Cloud Project Sync (Sheets)
+  // 7. Cloud Project Create, Rename (PATCH), Update (PUT), Version History & Cross-User Isolation
   const projRes = await api('/projects', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
@@ -173,12 +224,58 @@ try {
       title: 'Mobile Sheet Sync',
       project_type: 'sheets',
       data: { sheetNames: ['Sheet1'], sheets: { Sheet1: [['A', 'B'], [1, 2]] } },
+      note: 'Initial mobile sync',
     }),
   });
   assert.equal(projRes.status, 201, `Project create failed: ${projRes.raw}`);
-  console.log('[E2E] 6. Cloud project sync passed');
+  const projectId = projRes.data.id;
+  assert.equal(projRes.data.version, 1);
 
-  // 7. Notifications & Preferences
+  const userBProj = await api(`/projects/${projectId}`, {
+    headers: { Authorization: `Bearer ${tokenB}` },
+  });
+  assert.ok([403, 404].includes(userBProj.status), `Expected 403/404 on User B project read, got ${userBProj.status}`);
+
+  const renameRes = await api(`/projects/${projectId}/rename`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+    body: JSON.stringify({ title: 'Mobile Sheet Sync Renamed', expected_version: 1 }),
+  });
+  assert.equal(renameRes.status, 200, `Project rename failed: ${renameRes.raw}`);
+  assert.equal(renameRes.data.title, 'Mobile Sheet Sync Renamed');
+  assert.equal(renameRes.data.version, 2);
+
+  // Stale optimistic lock check on rename -> 409
+  const staleRename = await api(`/projects/${projectId}/rename`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+    body: JSON.stringify({ title: 'Stale Rename', expected_version: 1 }),
+  });
+  assert.equal(staleRename.status, 409, `Expected 409 on stale rename, got ${staleRename.status}`);
+
+  // Update project payload (PUT /projects/{id}) -> increments to version 3 & records version snapshot
+  const updateProjRes = await api(`/projects/${projectId}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+    body: JSON.stringify({
+      title: 'Mobile Sheet Sync v3',
+      data: { sheetNames: ['Sheet1'], sheets: { Sheet1: [['A', 'B'], [10, 20]] } },
+      expected_version: 2,
+      note: 'Updated spreadsheet values',
+    }),
+  });
+  assert.equal(updateProjRes.status, 200, `Project update failed: ${updateProjRes.raw}`);
+  assert.equal(updateProjRes.data.version, 3);
+
+  const versionsRes = await api(`/projects/${projectId}/versions`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  assert.equal(versionsRes.status, 200, `Project versions failed: ${versionsRes.raw}`);
+  assert.ok(Array.isArray(versionsRes.data) && versionsRes.data.length >= 2);
+  assert.equal(versionsRes.data[0].version_number, 3);
+  console.log('[E2E] 7. Cloud project create, rename (PATCH), update (PUT), version history & isolation passed');
+
+  // 8. Notifications & Preferences
   const notifRes = await api('/notifications', { headers: { Authorization: `Bearer ${token}` } });
   assert.equal(notifRes.status, 200);
   const prefRes = await api('/notifications/preferences', {
@@ -187,14 +284,14 @@ try {
     body: JSON.stringify({ in_app_workflow: true }),
   });
   assert.equal(prefRes.status, 200);
-  console.log('[E2E] 7. Notifications & preferences passed');
+  console.log('[E2E] 8. Notifications & preferences passed');
 
-  // 8. Standard User RBAC check against Admin Route -> 403
+  // 9. Standard User RBAC check against Admin Route -> 403
   const forbiddenAdmin = await api('/admin/telemetry', { headers: { Authorization: `Bearer ${token}` } });
   assert.equal(forbiddenAdmin.status, 403);
-  console.log('[E2E] 8. Standard user blocked from /admin/telemetry (403) passed');
+  console.log('[E2E] 9. Standard user blocked from /admin/telemetry (403) passed');
 
-  // 9. Password change & token rotation
+  // 10. Password change & token rotation
   const pwRes = await api('/users/me/change-password', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
@@ -208,9 +305,9 @@ try {
   const newTokenCheck = await api('/auth/me', { headers: { Authorization: `Bearer ${rotatedToken}` } });
   assert.equal(newTokenCheck.status, 200);
   token = rotatedToken;
-  console.log('[E2E] 9. Password change & old token revocation passed');
+  console.log('[E2E] 10. Password change & old token revocation passed');
 
-  // 10. Promote user to admin in temp SQLite DB & verify Admin Portal Login + Telemetry
+  // 11. Promote user to admin in temp SQLite DB & verify Admin Portal Login + Telemetry
   execFileSync(PYTHON_EXE, [
     '-c',
     `import sqlite3; c=sqlite3.connect(r"${TEMP_DB_PATH}"); c.execute("UPDATE users SET role='admin' WHERE email=?", ("${email}",)); c.commit(); c.close()`,
@@ -224,10 +321,10 @@ try {
   const adminToken = adminLogin.data.access_token;
   const telemetry = await api('/admin/telemetry', { headers: { Authorization: `Bearer ${adminToken}` } });
   assert.equal(telemetry.status, 200);
-  assert.ok(telemetry.data.total_users >= 1);
-  console.log('[E2E] 10. Admin login & telemetry passed');
+  assert.ok(telemetry.data.total_users >= 2);
+  console.log('[E2E] 11. Admin login & telemetry passed');
 
-  // 11. Logout & Token Revocation
+  // 12. Logout & Token Revocation
   const logoutRes = await api('/auth/logout', {
     method: 'POST',
     headers: { Authorization: `Bearer ${adminToken}` },
@@ -235,9 +332,9 @@ try {
   assert.equal(logoutRes.status, 200);
   const afterLogout = await api('/auth/me', { headers: { Authorization: `Bearer ${adminToken}` } });
   assert.equal(afterLogout.status, 401);
-  console.log('[E2E] 11. Logout & token revocation (401) passed');
+  console.log('[E2E] 12. Logout & token revocation (401) passed');
 
-  console.log('\nALL 11 REAL BACKEND E2E CHECKS PASSED!');
+  console.log('\nALL 12 REAL BACKEND E2E CHECKS PASSED!');
 } catch (err) {
   console.error('[E2E] FAILED:', err);
   console.error('--- SERVER LOGS ---\n', serverLogs);

@@ -1,7 +1,12 @@
 import React, { createContext, useCallback, useContext, useEffect, useState } from 'react';
 import { envManager } from '../config/env';
 import { apiClient, ApiError } from '../services/apiClient';
-import { getNetworkConnected, registerAppLifecycle, subscribeNetworkChanges } from '../services/nativeBridge';
+import {
+  DeepLinkEvent,
+  getNetworkConnected,
+  registerAppLifecycle,
+  subscribeNetworkChanges,
+} from '../services/nativeBridge';
 import { offlineStore } from '../services/offlineStore';
 import { isJwtExpired, secureStorage } from '../services/secureStorage';
 import { AuthSessionMeta, BackendRegisterPayload, PlanTier, UserEntitlements, UserRole, UserUiConfig } from '../types';
@@ -14,8 +19,10 @@ interface AuthContextValue {
   entitlements: UserEntitlements | null;
   uiConfig: UserUiConfig | null;
   sessionNotice: string | null;
+  pendingDeepLink: DeepLinkEvent | null;
   isAdmin: boolean;
   clearSessionNotice: () => void;
+  clearPendingDeepLink: () => void;
   login: (email: string, password: string, adminMode?: boolean) => Promise<void>;
   register: (payload: BackendRegisterPayload) => Promise<void>;
   logout: () => Promise<void>;
@@ -32,6 +39,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [uiConfig, setUiConfig] = useState<UserUiConfig | null>(null);
   const [isOnline, setIsOnline] = useState(true);
   const [sessionNotice, setSessionNotice] = useState<string | null>(null);
+  const [pendingDeepLink, setPendingDeepLink] = useState<DeepLinkEvent | null>(null);
 
   const wipeLocalSession = useCallback(async (notice?: string) => {
     apiClient.setToken(null);
@@ -139,6 +147,19 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           await hydrateUserState(await secureStorage.getSessionMeta()).catch(() => {});
         }
       },
+      onAppUrlOpen: async (deepLink) => {
+        if (!mounted) return;
+        if (deepLink.host === 'auth' && deepLink.path.includes('logout')) {
+          await wipeLocalSession('Signed out via deep link.');
+          return;
+        }
+        if (deepLink.host === 'auth' && deepLink.params.access_token && !isJwtExpired(deepLink.params.access_token)) {
+          apiClient.setToken(deepLink.params.access_token);
+          await hydrateUserState(null).catch(() => {});
+          return;
+        }
+        setPendingDeepLink(deepLink);
+      },
     });
 
     return () => {
@@ -223,8 +244,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         entitlements,
         uiConfig,
         sessionNotice,
+        pendingDeepLink,
         isAdmin,
         clearSessionNotice: () => setSessionNotice(null),
+        clearPendingDeepLink: () => setPendingDeepLink(null),
         login,
         register,
         logout,

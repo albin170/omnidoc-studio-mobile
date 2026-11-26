@@ -11,46 +11,54 @@ import { ConversionStudioScreen } from './screens/ConversionStudioScreen';
 import { DashboardScreen } from './screens/DashboardScreen';
 import { HistoryScreen } from './screens/HistoryScreen';
 import { LibraryScreen } from './screens/LibraryScreen';
-import { MoreScreen } from './screens/MoreScreen';
 import { NotificationsScreen } from './screens/NotificationsScreen';
 import { PdfStudioScreen } from './screens/PdfStudioScreen';
 import { ProfileScreen } from './screens/ProfileScreen';
 import { SettingsScreen } from './screens/SettingsScreen';
 import { SheetsStudioScreen } from './screens/SheetsStudioScreen';
+import { SlidesStudioScreen } from './screens/SlidesStudioScreen';
 import { StudiosHubScreen } from './screens/StudiosHubScreen';
+import { WordStudioScreen } from './screens/WordStudioScreen';
 import { apiClient } from './services/apiClient';
 import { captureDocumentPhoto, isNativePlatform, registerAppLifecycle } from './services/nativeBridge';
-import { MobileSubView, MobileTab } from './types';
+import { CloudProjectDetail, MobileSubView, MobileTab } from './types';
 
 const TAB_TITLES: Record<MobileTab, string> = {
   home: 'OmniDoc Studio',
-  library: 'Document Library',
-  studios: 'Document Studios',
-  activity: 'Processing History',
-  more: 'Account & Tools',
+  convert: 'Conversion Studio',
+  pdf: 'PDF Studio',
+  docs: 'Documents & Projects',
+  profile: 'Account & Profile',
 };
 
 const SUBVIEW_TITLES: Record<Exclude<MobileSubView, 'none'>, string> = {
-  pdf_studio: 'PDF Studio',
-  conversion_studio: 'Conversion Studio',
+  word_studio: 'Word Studio',
+  slides_studio: 'PowerPoint Slides',
   sheets_studio: 'Excel Sheets',
+  studios_hub: 'Document Studios',
+  history: 'Document History',
   notifications: 'Notifications',
-  profile: 'User Profile',
   settings: 'Account Settings',
   admin: 'Admin Console',
   ai_assistant: 'AI Assistant',
 };
 
 const MobileShell: React.FC = () => {
-  const { isBooting, isAuthenticated, isOnline } = useAuth();
+  const { isBooting, isAuthenticated, isOnline, pendingDeepLink, clearPendingDeepLink } = useAuth();
   const [activeTab, setActiveTab] = useState<MobileTab>('home');
   const [subView, setSubView] = useState<MobileSubView>('none');
   const [unreadCount, setUnreadCount] = useState(0);
   const [toast, setToast] = useState<{ type: 'info' | 'success' | 'error'; message: string } | null>(null);
 
   const [pdfFile, setPdfFile] = useState<File | null>(null);
-  const [sheetFile, setSheetFile] = useState<File | null>(null);
   const [convertFile, setConvertFile] = useState<File | null>(null);
+  const [wordFile, setWordFile] = useState<File | null>(null);
+  const [slidesFile, setSlidesFile] = useState<File | null>(null);
+  const [sheetFile, setSheetFile] = useState<File | null>(null);
+
+  const [wordProject, setWordProject] = useState<CloudProjectDetail | null>(null);
+  const [slidesProject, setSlidesProject] = useState<CloudProjectDetail | null>(null);
+  const [sheetProject, setSheetProject] = useState<CloudProjectDetail | null>(null);
 
   const showToast = useCallback((type: 'info' | 'success' | 'error', message: string) => {
     setToast({ type, message });
@@ -86,14 +94,120 @@ const MobileShell: React.FC = () => {
       .catch(() => {});
   }, [isAuthenticated, isOnline]);
 
+  // Handle omnidoc:// deep links when authenticated
+  useEffect(() => {
+    if (!isAuthenticated || !pendingDeepLink) return;
+
+    const target = `${pendingDeepLink.host}${pendingDeepLink.path}`
+      .replace(/^\/+|\/+$/g, '')
+      .toLowerCase();
+    const projectId = pendingDeepLink.params?.projectId || pendingDeepLink.params?.id;
+
+    if ((target === 'project' || target === 'projects') && projectId && isOnline) {
+      apiClient
+        .getProject(projectId)
+        .then((proj) => {
+          if (proj.project_type === 'docx') {
+            setWordFile(null);
+            setWordProject(proj);
+            setSubView('word_studio');
+          } else if (proj.project_type === 'slides') {
+            setSlidesFile(null);
+            setSlidesProject(proj);
+            setSubView('slides_studio');
+          } else if (proj.project_type === 'sheets') {
+            setSheetFile(null);
+            setSheetProject(proj);
+            setSubView('sheets_studio');
+          } else {
+            setSubView('none');
+            setActiveTab('docs');
+          }
+        })
+        .catch(() => {
+          setSubView('none');
+          setActiveTab('docs');
+        });
+      clearPendingDeepLink();
+      return;
+    }
+
+    switch (target) {
+      case 'home':
+      case 'dashboard':
+        setSubView('none');
+        setActiveTab('home');
+        break;
+      case 'convert':
+      case 'conversion_studio':
+        setSubView('none');
+        setActiveTab('convert');
+        break;
+      case 'pdf':
+      case 'pdf_studio':
+        setSubView('none');
+        setActiveTab('pdf');
+        break;
+      case 'docs':
+      case 'library':
+      case 'documents':
+        setSubView('none');
+        setActiveTab('docs');
+        break;
+      case 'profile':
+      case 'account':
+        setSubView('none');
+        setActiveTab('profile');
+        break;
+      case 'word':
+      case 'word_studio':
+        setSubView('word_studio');
+        break;
+      case 'slides':
+      case 'slides_studio':
+        setSubView('slides_studio');
+        break;
+      case 'sheets':
+      case 'sheets_studio':
+        setSubView('sheets_studio');
+        break;
+      case 'studios':
+      case 'studios_hub':
+        setSubView('studios_hub');
+        break;
+      case 'history':
+        setSubView('history');
+        break;
+      case 'notifications':
+        setSubView('notifications');
+        break;
+      case 'settings':
+        setSubView('settings');
+        break;
+      case 'admin':
+        setSubView('admin');
+        break;
+      case 'ai':
+      case 'ai_assistant':
+        setSubView('ai_assistant');
+        break;
+      default:
+        setSubView('none');
+        setActiveTab('home');
+        break;
+    }
+
+    clearPendingDeepLink();
+  }, [isAuthenticated, isOnline, pendingDeepLink, clearPendingDeepLink]);
+
   const handleQuickCameraScan = async () => {
     try {
       const photo = await captureDocumentPhoto('prompt');
       const pdfBytes = await imagesToPdf([{ bytes: photo.bytes, mimeType: photo.mimeType }]);
       const scannedFile = new File([pdfBytes as any], `scan_${Date.now()}.pdf`, { type: 'application/pdf' });
       setPdfFile(scannedFile);
-      setActiveTab('studios');
-      setSubView('pdf_studio');
+      setSubView('none');
+      setActiveTab('pdf');
       showToast('success', 'Scan converted to PDF in PDF Studio.');
     } catch (err: any) {
       if (!String(err?.message || '').toLowerCase().includes('cancel')) {
@@ -105,7 +219,7 @@ const MobileShell: React.FC = () => {
   if (isBooting) {
     return (
       <div className="h-full bg-[#0B1120] flex flex-col items-center justify-center gap-3 text-slate-300">
-        <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-indigo-500 to-cyan-500 animate-pulse" />
+        <div className="w-12 h-12 rounded-2xl bg-indigo-600 animate-pulse" />
         <p className="text-xs font-medium tracking-wide text-slate-400">Initializing Secure Vault...</p>
       </div>
     );
@@ -118,11 +232,28 @@ const MobileShell: React.FC = () => {
   const title = subView !== 'none' ? SUBVIEW_TITLES[subView] : TAB_TITLES[activeTab];
 
   const renderContent = () => {
-    if (subView === 'pdf_studio') return <PdfStudioScreen initialFile={pdfFile} onToast={showToast} />;
-    if (subView === 'conversion_studio') return <ConversionStudioScreen initialFile={convertFile} onToast={showToast} />;
-    if (subView === 'sheets_studio') return <SheetsStudioScreen initialFile={sheetFile} onToast={showToast} />;
+    if (subView === 'word_studio') {
+      return <WordStudioScreen initialFile={wordFile} initialProject={wordProject} onToast={showToast} />;
+    }
+    if (subView === 'slides_studio') {
+      return <SlidesStudioScreen initialFile={slidesFile} initialProject={slidesProject} onToast={showToast} />;
+    }
+    if (subView === 'sheets_studio') {
+      return <SheetsStudioScreen initialFile={sheetFile} initialProject={sheetProject} onToast={showToast} />;
+    }
+    if (subView === 'studios_hub') {
+      return (
+        <StudiosHubScreen
+          onNavigateTab={(t) => {
+            setSubView('none');
+            setActiveTab(t);
+          }}
+          onOpenSubView={(v) => setSubView(v)}
+        />
+      );
+    }
+    if (subView === 'history') return <HistoryScreen onToast={showToast} />;
     if (subView === 'notifications') return <NotificationsScreen onUnreadChange={setUnreadCount} onToast={showToast} />;
-    if (subView === 'profile') return <ProfileScreen onToast={showToast} />;
     if (subView === 'settings') return <SettingsScreen onToast={showToast} />;
     if (subView === 'admin') return <AdminScreen onToast={showToast} />;
     if (subView === 'ai_assistant') return <AiAssistantScreen onToast={showToast} />;
@@ -131,6 +262,7 @@ const MobileShell: React.FC = () => {
       case 'home':
         return (
           <DashboardScreen
+            unreadCount={unreadCount}
             onNavigateTab={(t) => {
               setSubView('none');
               setActiveTab(t);
@@ -139,30 +271,64 @@ const MobileShell: React.FC = () => {
             onQuickCameraScan={handleQuickCameraScan}
           />
         );
-      case 'library':
+      case 'convert':
+        return <ConversionStudioScreen initialFile={convertFile} onToast={showToast} />;
+      case 'pdf':
+        return <PdfStudioScreen initialFile={pdfFile} onToast={showToast} />;
+      case 'docs':
         return (
           <LibraryScreen
             onOpenInPdfStudio={(f) => {
               setPdfFile(f);
-              setSubView('pdf_studio');
+              setSubView('none');
+              setActiveTab('pdf');
+            }}
+            onOpenInConversionStudio={(f) => {
+              setConvertFile(f);
+              setSubView('none');
+              setActiveTab('convert');
+            }}
+            onOpenInWordStudio={(f) => {
+              setWordProject(null);
+              setWordFile(f);
+              setSubView('word_studio');
+            }}
+            onOpenInSlidesStudio={(f) => {
+              setSlidesProject(null);
+              setSlidesFile(f);
+              setSubView('slides_studio');
             }}
             onOpenInSheetsStudio={(f) => {
+              setSheetProject(null);
               setSheetFile(f);
               setSubView('sheets_studio');
             }}
-            onOpenInConverter={(f) => {
-              setConvertFile(f);
-              setSubView('conversion_studio');
+            onOpenProjectInWordStudio={(proj) => {
+              setWordFile(null);
+              setWordProject(proj);
+              setSubView('word_studio');
+            }}
+            onOpenProjectInSlidesStudio={(proj) => {
+              setSlidesFile(null);
+              setSlidesProject(proj);
+              setSubView('slides_studio');
+            }}
+            onOpenProjectInSheetsStudio={(proj) => {
+              setSheetFile(null);
+              setSheetProject(proj);
+              setSubView('sheets_studio');
             }}
             onToast={showToast}
           />
         );
-      case 'studios':
-        return <StudiosHubScreen onOpenSubView={(v) => setSubView(v)} />;
-      case 'activity':
-        return <HistoryScreen onToast={showToast} />;
-      case 'more':
-        return <MoreScreen unreadCount={unreadCount} onOpenSubView={(v) => setSubView(v)} />;
+      case 'profile':
+        return (
+          <ProfileScreen
+            unreadCount={unreadCount}
+            onOpenSubView={(v) => setSubView(v)}
+            onToast={showToast}
+          />
+        );
     }
   };
 
