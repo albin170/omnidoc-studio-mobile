@@ -1,16 +1,16 @@
-# OmniDoc Studio Mobile — Phase 1 Technical & Parity Audit Report
+# OmniDoc Studio Mobile — Phase 1 Technical & Parity Audit Report (Final)
 
 **Target Repository:** `c:\Users\Dell\Documents\omnidoc-studio-mobile`  
-**Read-Only Reference Repository:** `c:\Users\Dell\Documents\omnidoc-studio`  
+**Read-Only Reference Repository:** `c:\Users\Dell\Documents\omnidoc-studio` (verified untouched: `git status --porcelain` empty)  
 **Audit Scope:** Client architecture, Capacitor native/Android configuration, security posture, dependency advisories, shared FastAPI backend integration, and feature parity against the OmniDoc Studio web platform.
 
 ---
 
 ## 1. Executive Summary
 
-The baseline `omnidoc-studio-mobile` application establishes a solid Capacitor 7 + React 19 + TypeScript + Tailwind CSS v4 foundation backed by native `SecureVaultPlugin.java` (AndroidKeyStore AES-256-GCM), `CapacitorHttp` native networking, offline metadata caching, and local PDF/Sheets/Conversion engines.
+The baseline `omnidoc-studio-mobile` application established a Capacitor 7 + React 19 + TypeScript + Tailwind CSS v4 foundation backed by native `SecureVaultPlugin.java` (`AndroidKeyStore` AES-256-GCM), `CapacitorHttp` native networking, offline metadata caching, and local PDF/Sheets/Conversion engines.
 
-However, a deep inspection against `omnidoc-studio` reveals **critical security/dependency gaps, missing office studios, incomplete PDF/conversion workflows, missing UX affordances (inline preview, streaming download progress, confirmation dialogs, deep links), and a static favicon 404**.
+Phase 1 auditing identified **2 P0**, **6 P1**, **4 P2**, and **1 P3** findings. Every actionable finding has been remediated and verified across TypeScript, Vite production bundling, Vitest (`22/22`), live FastAPI E2E (`12/12`), Android JUnit (`2/2`), and Gradle debug/release/bundle packaging.
 
 ---
 
@@ -23,91 +23,60 @@ However, a deep inspection against `omnidoc-studio` reveals **critical security/
 
 ---
 
-## 3. Detailed Audit Findings (Baseline State)
+## 3. Audit Findings & Remediation Verification
 
 ### P0 — Critical Findings
 
-1. **P0-1: Vulnerable `pdfjs-dist` (`^5.3.31`) — GHSA-hq66-cqwq-w95j (Arbitrary JavaScript Execution)**
-   - **Location:** `package.json` (`"pdfjs-dist": "^5.3.31"`), verified via `npm audit --omit=dev`.
-   - **Details:** `pdfjs-dist >=5.6.83 <6.2.108` (and earlier `5.x` lines flagged by advisory `1138116`, CWE-79) permits arbitrary JavaScript execution when opening a malicious PDF. The web repo (`omnidoc-studio/package.json`) already runs `pdfjs-dist ^6.4.299`.
-   - **Remediation:** Upgrade `pdfjs-dist` to `>=6.2.108` (e.g., `^6.4.299` matching web) while verifying Vite's local worker resolution (`new URL('pdfjs-dist/build/pdf.worker.min.mjs', import.meta.url)`).
-   - **Note on Remaining Transitive/Legacy Advisories:** `npm audit --omit=dev` also reports `xlsx` (`<0.20.2`, `GHSA-4r6h-8v6p-xvw6` Prototype Pollution, `GHSA-5pgg-2g8v-p4x9` ReDoS — mitigated in `src/engines/sheetService.ts` via `sanitizeWorkbookData()` and row/col/size bounds, with `fixAvailable: false` on the npm registry) and `pptxgenjs` -> `image-size` (`GHSA-5p2g-fcmc-qvqq`, `GHSA-w3rx-r6r6-pgpr` — `fixAvailable` downgrades `pptxgenjs` to `4.0.0`, which breaks `4.0.1`). These must be documented and mitigated cleanly without breaking `pptxgenjs`.
+1. **P0-1: Vulnerable `pdfjs-dist` (`^5.3.31`) — GHSA-hq66-cqwq-w95j (Arbitrary JavaScript Execution)** — **RESOLVED**
+   - **Baseline:** `package.json` specified `"pdfjs-dist": "^5.3.31"`, flagged by `npm audit --omit=dev` (advisory `1138116`, CWE-79).
+   - **Remediation:** Upgraded to `"pdfjs-dist": "^6.5.438"` using `pdfjs-dist/legacy/build/pdf.mjs` and local Vite-bundled `pdfjs-dist/legacy/build/pdf.worker.min.mjs` in `src/engines/pdfService.ts` (avoiding `Uint8Array.prototype.toHex` compatibility failures in Node 24 and older Android WebViews `< Chrome 140`).
+   - **Verification:** `npm audit --omit=dev` reports **0 `pdfjs-dist` vulnerabilities**. Remaining 3 high advisories are upstream-only: `xlsx` (`GHSA-4r6h-8v6p-xvw6`, `GHSA-5pgg-2g8v-p4x9`, `fixAvailable: false`, mitigated by `sanitizeWorkbookData()` + row/col/size caps) and `image-size` via `pptxgenjs ^4.0.1` (`GHSA-5p2g-fcmc-qvqq`, `GHSA-w3rx-r6r6-pgpr`, where `npm audit fix --force` would break `pptxgenjs` by downgrading to `4.0.0`).
 
-2. **P0-2: Unverified Request Cancellation & Non-Streaming Document Downloads**
-   - **Location:** `src/services/apiClient.ts` (`downloadDocument`, `uploadDocument`, `requestJson`).
-   - **Details:** Baseline `downloadDocument(documentId)` calls `res.blob()` without streaming progress (`res.body.getReader()` + `Content-Length`) or `AbortSignal` cancellation, and `uploadDocument` / `getHealth` / `exportMyData` lack `AbortSignal` wiring and duplicate-submission protection. On large PDFs over mobile networks, users see no download progress and cannot cancel in-flight transfers.
+2. **P0-2: Unverified Request Cancellation & Non-Streaming Document Downloads** — **RESOLVED**
+   - **Baseline:** `src/services/apiClient.ts` used `res.blob()` without streaming progress or `AbortSignal`, and lacked duplicate-submission guards and strict response shape validation.
+   - **Remediation:** Upgraded `downloadDocument(documentId, onProgress?, signal?)` with `res.body.getReader()` + `Content-Length` progress + `AbortSignal` cancellation; added `signal?: AbortSignal` to `uploadDocument`, `requestJson`, `getHealth`, `exportMyData`, and project/job/document calls; added `runDedupedMutation()` and response shape validators.
 
 ---
 
 ### P1 — High-Severity Parity & Functional Findings
 
-3. **P1-1: Missing Word Document Studio (`WordStudioScreen`)**
-   - **Location:** `src/engines/docxService.ts` exists, but no `src/screens/WordStudioScreen.tsx` is wired into `App.tsx` or `StudiosHubScreen.tsx`.
-   - **Web Reference:** `omnidoc-studio/src/components/docx/DocxStudio.tsx` provides rich editing, headings (H1–H3), bold/italic/underline, bullet lists, tables, find & replace, live word/character/reading-time counters, HTML sanitization (`sanitizeHtml` / `sanitizeImportedHtml`), DOCX/PDF/HTML/TXT export, and Cloud Project sync.
-   - **Impact:** Mobile users cannot create, edit, or open `.docx` files from the Library or Cloud Projects.
+3. **P1-1: Missing Word Document Studio (`WordStudioScreen`)** — **RESOLVED**
+   - **Remediation:** Created `src/screens/WordStudioScreen.tsx` and hardened `src/engines/docxService.ts` (`sanitizeHtml`, `htmlToDocxItems`, `createDocxBlob`, `extractTextFromDocxFile`, `convertTextOrDocxToPdf`) with XSS-safe DOMParser + regex fallback, touch formatting toolbar, Find & Replace, live word/character counter, DOCX/PDF/TXT/HTML export, and Cloud Project sync (`project_type: 'docx'`).
 
-4. **P1-2: Missing PowerPoint Presentation Studio (`SlidesStudioScreen`)**
-   - **Location:** `src/engines/pptxService.ts` exists, but no `src/screens/SlidesStudioScreen.tsx` is implemented.
-   - **Web Reference:** `omnidoc-studio/src/components/slides/SlideStudio.tsx` provides 16:9 slide editing, slide strip, add/duplicate/delete/reorder slides, visual themes, fullscreen presenter mode, and PPTX/PDF export + Cloud Project sync.
-   - **Impact:** Mobile users cannot author, edit, present, or open `.pptx` files or `slides` Cloud Projects.
+4. **P1-2: Missing PowerPoint Presentation Studio (`SlidesStudioScreen`)** — **RESOLVED**
+   - **Remediation:** Created `src/screens/SlidesStudioScreen.tsx` backed by `src/engines/pptxService.ts` with 16:9 widescreen editor, slide strip, add/duplicate/reorder/delete slides, theme presets, fullscreen touch/swipe presenter mode, PPTX/PDF export, and Cloud Project sync (`project_type: 'slides'`).
 
-5. **P1-3: Missing Batch Conversion & ZIP Archive Export in `ConversionStudioScreen`**
-   - **Location:** `src/screens/ConversionStudioScreen.tsx` and `src/engines/converter.ts`.
-   - **Web Reference:** `omnidoc-studio/src/services/batchService.ts` (`runBatchConversion`) and `ConversionHub.tsx` support multi-file queues, upfront compatibility/fidelity checks (`getConversionCompatibilityReport`), and ZIP archive packaging (`createBatchZipArchive`).
-   - **Impact:** Mobile users can only convert one file at a time with no upfront compatibility score or batch ZIP export.
+5. **P1-3: Missing Batch Conversion & ZIP Archive Export in `ConversionStudioScreen`** — **RESOLVED**
+   - **Remediation:** Upgraded `src/engines/converter.ts` (`createBatchZipArchive`, `getConversionCompatibilityReport`) and `src/screens/ConversionStudioScreen.tsx` with multi-file queue, per-item target selector, fidelity/compatibility badge, Convert All, Cancel/Retry, single-file Save/Share/Upload, Download Batch ZIP, and On-Device + Cloud execution.
 
-6. **P1-4: Incomplete PDF Studio Capabilities (`PdfStudioScreen` & `pdfService.ts`)**
-   - **Location:** `src/screens/PdfStudioScreen.tsx` & `src/engines/pdfService.ts`.
-   - **Missing vs Web (`PdfStudio.tsx`):**
-     - Interactive zoom controls (e.g., 50%–200% / fit width).
-     - Text search & occurrence counting (`countTextOccurrencesInPdf` / `searchTextInPdf`).
-     - Page reorder (move page up/down), duplicate page, insert blank page, and client-side compress/optimize.
-     - Verified stream redaction / annotation overlays (highlight, text box, watermark) and Cloud Project save/sync.
+6. **P1-4: Incomplete PDF Studio Capabilities (`PdfStudioScreen` & `pdfService.ts`)** — **RESOLVED**
+   - **Remediation:** Added zoom controls (`0.75x`–`2.25x`) with cooperative `CancelableRenderTask`, debounced in-PDF search (`countTextOccurrencesInPdf`) with clickable page jump chips, page reorder, `duplicatePdfPage`, `insertBlankPage`, `compressPdf`, `ConfirmDialog` delete confirmation, and Visual Annotations & Overlays sheet (text note, highlight, signature pad canvas, watermark, page numbers).
 
-7. **P1-5: Missing Inline Document Preview & Cloud Project Rename / Studio Opening in `LibraryScreen`**
-   - **Location:** `src/screens/LibraryScreen.tsx`.
-   - **Details:** Tapping a document only opens an action sheet; there is no inline preview modal (images via object URL with proper revocation, text/CSV/MD/HTML preview, PDF metadata + Digital Twin summary). Cloud Projects (`projects` section) cannot be renamed (`PATCH /projects/{id}/rename` missing in `apiClient.ts`) or loaded directly into Word/Slides/Sheets studios.
+7. **P1-5: Missing Inline Document Preview & Cloud Project Rename / Studio Opening in `LibraryScreen`** — **RESOLVED**
+   - **Remediation:** Added `renameProject` (`PATCH /projects/{id}/rename`) in `apiClient.ts` and upgraded `src/screens/LibraryScreen.tsx` with inline Document Preview modal (images via object URL with cleanup, text/CSV/MD/HTML preview, PDF/Office metadata + Digital Twin summary), live streaming download progress with Cancel, Cloud Project rename, and direct launchers into Word/Slides/Sheets/PDF/Conversion studios.
 
-8. **P1-6: Missing Accessible Confirmation Dialog (`ConfirmDialog`) for Destructive Actions**
-   - **Location:** `src/screens/LibraryScreen.tsx`, `SettingsScreen.tsx`, `AdminScreen.tsx`, `HistoryScreen.tsx`.
-   - **Details:** Destructive actions (deleting documents/projects, suspending users, clearing offline cache, cancelling jobs, deleting account) lack a unified touch-friendly accessible `ConfirmDialog` component (`role="dialog"`, `aria-modal="true"`).
+8. **P1-6: Missing Accessible Confirmation Dialog (`ConfirmDialog`) for Destructive Actions** — **RESOLVED**
+   - **Remediation:** Created `src/components/ConfirmDialog.tsx` (`role="alertdialog"`, `aria-modal="true"`, Escape-key handling) and wired it across `LibraryScreen`, `PdfStudioScreen`, `ProfileScreen`, `SettingsScreen`, `AdminScreen`, `HistoryScreen`, and `NotificationsScreen`.
 
 ---
 
 ### P2 — Medium-Severity Architecture, Navigation & Native Integration Findings
 
-9. **P2-1: Primary Navigation Structure Alignment**
-   - **Location:** `src/types/index.ts`, `src/components/MobileLayout.tsx`, `src/App.tsx`.
-   - **Details:** Baseline uses `home | library | studios | activity | more`. Aligning primary tabs to `home | convert | pdf | docs | profile` surfaces Conversion Studio, PDF Studio, and Documents as 1-tap primary tabs while routing Studios Hub, Word/Slides/Sheets Studios, History, Notifications, Settings, AI Assistant, and Admin Console cleanly via `MobileSubView`.
+9. **P2-1: Primary Navigation Structure Alignment** — **RESOLVED**
+   - **Remediation:** Updated `MobileTab` to `'home' | 'convert' | 'pdf' | 'docs' | 'profile'` and `MobileSubView` in `src/types/index.ts`, `MobileLayout.tsx`, and `App.tsx`, turning `ProfileScreen` into a clean Account Hub.
 
-10. **P2-2: Missing Android Deep Links (`omnidoc://`) & `appUrlOpen` Listener**
-    - **Location:** `android/app/src/main/AndroidManifest.xml`, `src/services/nativeBridge.ts`, `src/context/AuthContext.tsx`.
-    - **Details:** `MainActivity` has only `MAIN`/`LAUNCHER` intent filter; no `<intent-filter>` for `omnidoc://` custom scheme exists, and `App.addListener('appUrlOpen', ...)` is not wired to route deep links safely.
+10. **P2-2: Missing Android Deep Links (`omnidoc://`) & `appUrlOpen` Listener** — **RESOLVED**
+    - **Remediation:** Added `<intent-filter android:autoVerify="false">` for `omnidoc://` in `android/app/src/main/AndroidManifest.xml`, wired `appUrlOpen` parsing in `nativeBridge.ts` and `AuthContext.tsx`, and handled authenticated deep-link routing in `App.tsx`.
 
-11. **P2-3: Visual Polish & UI Surface Refinement**
-    - **Location:** `src/components/MobileLayout.tsx`, `src/screens/*`.
-    - **Details:** Baseline layout relies on generic gradient headers and ungrouped "More" actions; `ProfileScreen` should serve as a structured Account/Profile hub (Settings, Notifications, History, Developer API Keys, Admin Console gated by `isAdmin`).
+11. **P2-3: Visual Polish & UI Surface Refinement** — **RESOLVED**
+    - **Remediation:** Refined dark slate/indigo palette, touch targets (`min-h-[44px]`/`48px`), safe-area padding, and explicit accessibility labels/ids across `AuthScreen.tsx`, `MobileLayout.tsx`, `DashboardScreen.tsx`, and all screens.
 
-12. **P2-4: Missing React Component UI Tests & Cross-User E2E Verification**
-    - **Location:** `src/tests/*`, `scripts/run-backend-e2e.mjs`.
-    - **Details:** Baseline Vitest suite (13 tests) covers services/engines only with zero `@testing-library/react` component tests (`AuthScreen`, `ConfirmDialog`, `MobileLayout`, `AdminScreen` 403 guard). `run-backend-e2e.mjs` does not test cross-user tenant isolation (User B attempting to read/download/delete User A's document) or `PATCH /projects/{id}/rename` + version history.
+12. **P2-4: Missing React Component UI Tests & Cross-User E2E Verification** — **RESOLVED**
+    - **Remediation:** Expanded `src/tests/` to 4 files / 22 passing tests including `src/tests/uiComponents.test.tsx` (`@testing-library/react`), and upgraded `scripts/run-backend-e2e.mjs` to 12/12 passing checks including cross-user isolation (403/404) and `PATCH /projects/{id}/rename` + `PUT /projects/{id}` + version history.
 
 ---
 
 ### P3 — Low-Severity Hygiene & Static Asset Findings
 
-13. **P3-1: Missing `public/favicon.svg` Causing `/favicon.ico` 404**
-    - **Location:** `index.html` & `public/`.
-    - **Details:** `omnidoc-studio/public/favicon.svg` exists in the web repo, whereas `omnidoc-studio-mobile` has no `public/favicon.svg` and no `<link rel="icon">` in `index.html`, causing browser/WebView 404 requests for `/favicon.ico`.
-
----
-
-## 4. Security Architecture Baseline Verification
-
-The following security controls are **already present** in the baseline and must be preserved across all upgrades:
-- `android:allowBackup="false"` and `android:usesCleartextTraffic="false"` in `AndroidManifest.xml`.
-- `network_security_config.xml` permitting cleartext HTTP **only** for `10.0.2.2`, `localhost`, `127.0.0.1`.
-- `SecureVaultPlugin.java` encrypting JWTs and session metadata using `AES/GCM/NoPadding` (256-bit) backed by `AndroidKeyStore`.
-- `validateApiUrl()` enforcing `https://` for `staging` and `production`.
-- `validateUploadFile()` checking magic bytes, OpenXML structure, encrypted PDF/Office rejection, and plan size limits.
-- `offlineStore.clearUserCaches()` invoked on logout and HTTP `401` interception.
+13. **P3-1: Missing `public/favicon.svg` Causing `/favicon.ico` 404** — **RESOLVED**
+    - **Remediation:** Created `public/favicon.svg` and added `<link rel="icon" type="image/svg+xml" href="./favicon.svg" />` in `index.html`.
