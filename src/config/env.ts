@@ -1,11 +1,29 @@
+import { Capacitor } from '@capacitor/core';
 import { Preferences } from '@capacitor/preferences';
 import { AppEnvironment } from '../types';
 
 const ENV_PREF_KEY = 'omnidoc_mobile_env';
 const CUSTOM_URL_PREF_KEY = 'omnidoc_mobile_custom_api_url';
 
+export function resolveDefaultProductionApiUrl(): string {
+  try {
+    if (
+      !Capacitor.isNativePlatform() &&
+      typeof window !== 'undefined' &&
+      window.location?.protocol === 'https:' &&
+      window.location.hostname !== 'localhost' &&
+      window.location.hostname !== '127.0.0.1'
+    ) {
+      return `${window.location.origin}/api/v1`;
+    }
+  } catch {
+    // ignore in non-browser environments
+  }
+  return import.meta.env.VITE_API_PROD_URL || 'https://omnidoc-studio-jet.vercel.app/api/v1';
+}
+
 export const DEFAULT_URLS: Record<AppEnvironment, string> = {
-  production: import.meta.env.VITE_API_PROD_URL || 'https://omnidoc-studio-jet.vercel.app/api/v1',
+  production: resolveDefaultProductionApiUrl(),
   staging: import.meta.env.VITE_API_STAGING_URL || 'https://omnidoc-studio-jet.vercel.app/api/v1',
   development: import.meta.env.VITE_API_DEV_URL || 'http://10.0.2.2:8000/api/v1',
 };
