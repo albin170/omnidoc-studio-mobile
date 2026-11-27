@@ -14,10 +14,10 @@ jobs:
       - name: Checkout mobile repository
         uses: actions/checkout@v4
 
-      - name: Setup Node.js
+      - name: Setup Node.js 22
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: '22'
           cache: npm
 
       - name: Install dependencies
@@ -62,23 +62,34 @@ jobs:
           path: mobile
 
       - name: Checkout OmniDoc web/backend repository
+        id: checkout_backend
+        continue-on-error: true
         uses: actions/checkout@v4
         with:
           repository: albin170/omnidoc-studio
           path: backend-repo
+          token: ${{ secrets.OMNIDOC_WEB_READ_TOKEN || github.token }}
+
+      - name: Skip if cross-repo token unavailable
+        if: steps.checkout_backend.outcome != 'success'
+        run: |
+          echo "Cross-repository checkout of albin170/omnidoc-studio skipped (set OMNIDOC_WEB_READ_TOKEN secret if private)." >> "$GITHUB_STEP_SUMMARY"
 
       - name: Setup Python 3.12
+        if: steps.checkout_backend.outcome == 'success'
         uses: actions/setup-python@v5
         with:
           python-version: '3.12'
 
       - name: Install backend dependencies
+        if: steps.checkout_backend.outcome == 'success'
         working-directory: backend-repo/backend
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
       - name: Run PostgreSQL & Storage integration suite
+        if: steps.checkout_backend.outcome == 'success'
         working-directory: backend-repo/backend
         env:
           ENVIRONMENT: testing

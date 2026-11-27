@@ -14,10 +14,10 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Setup Node.js
+      - name: Setup Node.js 22
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: '22'
           cache: npm
 
       - name: Install npm dependencies & run quality gates
@@ -47,14 +47,19 @@ jobs:
             build
 
       - name: Build & sign iOS archive/IPA when Apple credentials are configured
-        if: ${{ secrets.APPLE_CERTIFICATE_P12_BASE64 != '' && secrets.APPLE_PROVISIONING_PROFILE_BASE64 != '' && secrets.APPLE_TEAM_ID != '' }}
         env:
           CERT_B64: ${{ secrets.APPLE_CERTIFICATE_P12_BASE64 }}
           CERT_PW: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
           PROFILE_B64: ${{ secrets.APPLE_PROVISIONING_PROFILE_BASE64 }}
           TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-          EXPORT_METHOD: ${{ secrets.APPLE_EXPORT_METHOD || 'app-store-connect' }}
+          EXPORT_METHOD: ${{ secrets.APPLE_EXPORT_METHOD }}
         run: |
+          if [ -z "${CERT_B64:-}" ] || [ -z "${PROFILE_B64:-}" ] || [ -z "${TEAM_ID:-}" ]; then
+            echo "iOS simulator build passed. Signed IPA archive skipped because Apple Developer signing secrets are not configured." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          METHOD="${EXPORT_METHOD:-app-store-connect}"
           KEYCHAIN_PATH="${RUNNER_TEMP}/app-signing.keychain-db"
           KEYCHAIN_PW="$(openssl rand -hex 16)"
           security create-keychain -p "$KEYCHAIN_PW" "$KEYCHAIN_PATH"
@@ -87,7 +92,7 @@ jobs:
           <plist version="1.0">
           <dict>
             <key>method</key>
-            <string>${EXPORT_METHOD}</string>
+            <string>${METHOD}</string>
             <key>teamID</key>
             <string>${TEAM_ID}</string>
             <key>signingStyle</key>
@@ -102,11 +107,6 @@ jobs:
             -exportOptionsPlist "${RUNNER_TEMP}/ExportOptions.plist"
 
           ls -lh "${RUNNER_TEMP}/ipa-out"
-
-      - name: Document missing Apple Developer signing credentials
-        if: ${{ secrets.APPLE_CERTIFICATE_P12_BASE64 == '' || secrets.APPLE_PROVISIONING_PROFILE_BASE64 == '' || secrets.APPLE_TEAM_ID == '' }}
-        run: |
-          echo "iOS simulator build passed. Signed IPA archive skipped because Apple Developer signing secrets (APPLE_CERTIFICATE_P12_BASE64, APPLE_PROVISIONING_PROFILE_BASE64, APPLE_TEAM_ID) are not configured." >> "$GITHUB_STEP_SUMMARY"
 
       - name: Cleanup temporary Apple signing artifacts
         if: always()
