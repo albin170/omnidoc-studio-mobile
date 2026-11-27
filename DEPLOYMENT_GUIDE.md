@@ -1,89 +1,60 @@
-# OmniDoc Studio Mobile — Deployment, Signing & Release Guide
+# OmniDoc Studio Mobile — Deployment, Signing & CI/CD Guide
 
-> **Distribution Policy:** Release builds are generated locally for QA verification and signed distribution preparation. Do **not** publish to Google Play Store without explicit authorization. Never commit `.env`, `android/keystore.properties`, `*.jks`, or `*.keystore` files.
-
----
-
-## 1. Verified Release Artifacts
-
-Generated with Vite `6.4.6`, Capacitor `7.4.4`, Gradle `9.7.1`, AGP `8.7.2`, and Eclipse Temurin JDK `21.0.13+9`:
-
-| Artifact | Output Path | Verified Size |
-| :--- | :--- | :--- |
-| Debug APK | `android/app/build/outputs/apk/debug/app-debug.apk` | `8,328,910` bytes (`7.94 MB`) |
-| Release APK (unsigned) | `android/app/build/outputs/apk/release/app-release-unsigned.apk` | `6,508,722` bytes (`6.21 MB`) |
-| Release App Bundle (AAB) | `android/app/build/outputs/bundle/release/app-release.aab` | `5,882,244` bytes (`5.61 MB`) |
+> **Security Policy:** Release artifacts are signed using an external PKCS12 upload keystore kept strictly outside Git (`%USERPROFILE%\.omnidoc-signing\omnidoc-release.jks`). Never commit `*.jks`, `*.keystore`, `android/keystore.properties`, or `.env*` secret files. Do **not** publish to Google Play Store without explicit release sign-off.
 
 ---
 
-## 2. Environment Configuration
+## 1. Verified Release Artifacts (`v2.1.0`, `versionCode: 2`)
 
-Copy `.env.example` (or `.env.production.example` / `.env.staging.example`) to `.env.local` (git-ignored) as needed:
+| Artifact | Output Path | Exact Size | Verification |
+| :--- | :--- | :--- | :--- |
+| Debug APK | `android/app/build/outputs/apk/debug/app-debug.apk` | `8,208,368` bytes (`7.83 MB`) | Compiles & packages cleanly |
+| Instrumented Test APK | `android/app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk` | `563,768` bytes (`550.55 KB`) | Compiles & packages `MainActivityInstrumentedTest` + `ExampleInstrumentedTest` |
+| **Signed Release APK** | `android/app/build/outputs/apk/release/app-release.apk` | **`6,656,312` bytes (`6.35 MB`)** | `apksigner verify` -> `Verifies` (`v1`: true, `v2`: true; RSA-2048) |
+| **Signed App Bundle (AAB)** | `android/app/build/outputs/bundle/release/app-release.aab` | **`5,999,438` bytes (`5.72 MB`)** | `jarsigner -verify` -> `jar verified.` |
 
-- `VITE_APP_ENV=production`
-- `VITE_API_PROD_URL=https://omnidoc-studio-jet.vercel.app/api/v1`
-- `VITE_API_STAGING_URL=https://omnidoc-studio-jet.vercel.app/api/v1`
-- `VITE_API_TIMEOUT_MS=30000`
-
-All production and staging URLs enforce HTTPS via both `validateApiUrl()` (`src/config/env.ts`) and Android `network_security_config.xml`.
+**Signer Certificate (`apksigner verify --print-certs`):**
+- DN: `CN=OmniDoc Studio Mobile, OU=Mobile Engineering, O=OmniDoc Studio, L=Bengaluru, ST=KA, C=IN`
+- SHA-256 Digest: `fb82c807d4b6fd61a2ff0ac981324e15bfb5a328ad54cd594d019cd588ad4f48`
 
 ---
 
-## 3. Signing Configuration (Upload Keystore)
-
-Generate an upload keystore outside git tracking:
+## 2. Generating & Verifying an Upload Keystore (External to Repo)
 
 ```powershell
-keytool -genkeypair -v `
-  -keystore android\omnidoc-release.jks `
-  -alias omnidoc-upload `
-  -keyalg RSA -keysize 2048 -validity 10000
+$ksDir = Join-Path $env:USERPROFILE '.omnidoc-signing'
+New-Item -ItemType Directory -Force -Path $ksDir | Out-Null
+& 'C:\Users\Dell\.gradle\jdks\temurin-21\jdk-21.0.13+9\bin\keytool.exe' -genkeypair -v `
+  -keystore (Join-Path $ksDir 'omnidoc-release.jks') `
+  -storetype PKCS12 -alias omnidocrelease -keyalg RSA -keysize 2048 -validity 10000
 ```
 
-Option A — Local properties file (`android/keystore.properties`, git-ignored, copy from `android/keystore.properties.example`):
-
-```properties
-storeFile=omnidoc-release.jks
-storePassword=YOUR_KEYSTORE_PASSWORD
-keyAlias=omnidoc-upload
-keyPassword=YOUR_KEY_PASSWORD
-```
-
-Option B — CI/CD environment variables (consumed automatically by `android/app/build.gradle`):
+Configure `android/app/build.gradle` signing automatically via environment variables (no untracked file edits needed):
 - `OMNIDOC_KEYSTORE_FILE`
 - `OMNIDOC_KEYSTORE_PASSWORD`
 - `OMNIDOC_KEY_ALIAS`
 - `OMNIDOC_KEY_PASSWORD`
 
-Build signed release artifacts:
-
-```bash
-npm run cap:sync
-npm run android:release
-npm run android:bundle
-```
-
-Verify APK signature:
+Verify cryptographic signatures after building:
 
 ```powershell
-& "$env:LOCALAPPDATA\Android\Sdk\build-tools\36.1.0\apksigner.bat" verify --verbose android\app\build\outputs\apk\release\app-release.apk
+& "$env:LOCALAPPDATA\Android\Sdk\build-tools\36.0.0\apksigner.bat" verify --verbose --print-certs android\app\build\outputs\apk\release\app-release.apk
+& "C:\Users\Dell\.gradle\jdks\temurin-21\jdk-21.0.13+9\bin\jarsigner.exe" -verify android\app\build\outputs\bundle\release\app-release.aab
 ```
 
 ---
 
-## 4. Device / Emulator Installation & Verification
+## 3. GitHub Actions CI/CD Workflows
 
-```powershell
-& "$env:LOCALAPPDATA\Android\Sdk\platform-tools\adb.exe" install -r android\app\build\outputs\apk\debug\app-debug.apk
-& "$env:LOCALAPPDATA\Android\Sdk\platform-tools\adb.exe" shell am start -n studio.omnidoc.mobile/.MainActivity
-```
+- [`.github/workflows/mobile-ci.yml`](.github/workflows/mobile-ci.yml):
+  1. `frontend-and-security`: Runs `npm ci`, `npm run typecheck`, `npm run lint`, `npm test`, `npm run build`, and `npm audit --omit=dev`.
+  2. `postgres-and-storage-integration`: Provisions a live `postgres:16-alpine` service container and runs `pytest tests/test_postgres_and_storage_integration.py tests/test_ai_consent_and_mobile_code.py tests/test_supabase_storage.py -v` with `TEST_DATABASE_URL=postgresql+asyncpg://...`.
+- [`.github/workflows/android-build.yml`](.github/workflows/android-build.yml):
+  1. `android-compile-and-unit-test`: Builds Vite assets, runs `npx cap sync android`, executes `./gradlew --no-daemon testDebugUnitTest assembleDebug assembleDebugAndroidTest`, and uploads APK artifacts.
+  2. `android-emulator-instrumented`: Runs `./gradlew --no-daemon connectedDebugAndroidTest` on `reactivecircus/android-emulator-runner@v2` (API 34).
 
 ---
 
-## 5. Pre-Release Checklist
+## 4. Production App Links Note (`assetlinks.json`)
 
-1. Confirm `git -C c:\Users\Dell\Documents\omnidoc-studio status --porcelain` is empty (shared web/backend untouched).
-2. Confirm zero secrets (`.env`, `keystore.properties`, `*.jks`) are staged in `omnidoc-studio-mobile`.
-3. Increment `versionCode` and `versionName` in `android/app/build.gradle` for store tracks.
-4. Run full verification: `npm run typecheck && npm run build && npm test && npm run e2e:backend && npx cap sync android` and Gradle `testDebugUnitTest assembleDebug assembleRelease bundleRelease`.
-5. Confirm `android:allowBackup="false"`, `android:usesCleartextTraffic="false"`, and `2026.1` consent versions remain active.
+`AndroidManifest.xml` declares `android:autoVerify="true"` for `https://omnidoc-studio-jet.vercel.app/mobile`. To enable system-verified App Link auto-opening without disambiguation dialogs on physical devices, ensure `https://omnidoc-studio-jet.vercel.app/.well-known/assetlinks.json` serves the production signing certificate's SHA-256 fingerprint (`fb82c807d4b6fd61a2ff0ac981324e15bfb5a328ad54cd594d019cd588ad4f48` for this upload cert, or the Play App Signing key fingerprint once enrolled in Play Console).

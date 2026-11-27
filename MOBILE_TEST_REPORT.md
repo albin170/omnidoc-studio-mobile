@@ -1,78 +1,52 @@
 # OmniDoc Studio Mobile — Testing & Verification Report
 
-**Target Repository:** `c:\Users\Dell\Documents\omnidoc-studio-mobile`  
-**Shared Backend Reference:** `c:\Users\Dell\Documents\omnidoc-studio` (unmodified)
+**Target Repository:** `c:\Users\Dell\Documents\omnidoc-studio-mobile` (`v2.1.0`, `versionCode: 2`)  
+**Shared Backend Reference:** `c:\Users\Dell\Documents\omnidoc-studio`
 
 ---
 
 ## 1. Automated Verification Summary
 
-| Suite | Command | Scope | Observed Result |
+| Suite / Artifact | Command | Scope | Observed Result |
 | :--- | :--- | :--- | :--- |
 | TypeScript Check | `npm run typecheck` (`tsc --noEmit`) | Strict type checking across `src/` | **PASS** (0 errors) |
-| Production Web Bundle | `npm run build` (`tsc -b && vite build`) | 1,879 modules + local `pdf.worker.min-B5Yc7dP4.mjs` (`1,327.59 kB`) | **PASS** (`24.48s`) |
-| Vitest Unit, Engine & UI Suite | `npm test` (`vitest run`) | 4 test files (`authAndSecurity`, `documentsAndNetwork`, `studiosEngines`, `uiComponents`) | **PASS (22/22 in 12.47s)** |
-| Live FastAPI Backend E2E | `npm run e2e:backend` (`node scripts/run-backend-e2e.mjs`) | Unmodified `omnidoc-studio` FastAPI backend on port `18089` (temp SQLite + vault) | **PASS (12/12)** |
-| Dependency Audit | `npm audit --omit=dev` | Production dependency tree | **0 `pdfjs-dist` advisories** (`3` upstream-only: `xlsx` ×2, `image-size` via `pptxgenjs`) |
-| Capacitor Android Sync | `npx cap sync android` | Copies `dist/` to Android assets & syncs 9 plugins | **PASS (`5.695s`)** |
-| Android Native JUnit | `.\gradlew.bat testDebugUnitTest` | `ExampleUnitTest` (1) + `SecureVaultLogicTest` (1) | **PASS (2/2)** |
-| Android Debug APK | `.\gradlew.bat assembleDebug` | `android/app/build/outputs/apk/debug/app-debug.apk` | **PASS (`8,328,910` bytes / `7.94 MB`)** |
-| Android Release APK | `.\gradlew.bat assembleRelease` | `android/app/build/outputs/apk/release/app-release-unsigned.apk` | **PASS (`6,508,722` bytes / `6.21 MB`)** |
-| Android App Bundle (AAB) | `.\gradlew.bat bundleRelease` | `android/app/build/outputs/bundle/release/app-release.aab` | **PASS (`5,882,244` bytes / `5.61 MB`)** |
+| ESLint Check | `npm run lint` (`eslint src`) | ESLint 9 + `typescript-eslint` across `src/` | **PASS** (0 errors; 217 `@typescript-eslint/no-explicit-any` warnings) |
+| Vitest Unit, Engine & UI Suite | `npm test` (`vitest run`) | 4 test files (`authAndSecurity`, `documentsAndNetwork`, `studiosEngines`, `uiComponents`) | **PASS (31/31 tests across 4 files)** |
+| Production Web Bundle | `npm run build` (`tsc -b && vite build`) | 1,932 modules + local `pdf.worker.min-B5Yc7dP4.mjs` (`1,327.59 kB`) | **PASS** |
+| Dependency Security Audit | `npm audit --omit=dev` (and `npm audit`) | Full npm production/dev dependency trees | **PASS (0 vulnerabilities)** |
+| Live FastAPI Backend E2E | `npm run e2e:backend` (`node scripts/run-backend-e2e.mjs`) | Real `omnidoc-studio` FastAPI uvicorn backend on port `18089` | **PASS (16/16 checks)** |
+| Backend Auth & Consent Pytest | `pytest tests/test_ai_consent_and_mobile_code.py tests/test_auth_and_isolation.py tests/test_auth_regression_suite.py -v` | AI consent registration (`True`/`False`), mandatory Terms/Privacy `422`, mobile auth code exchange/replay/redirect, org isolation | **PASS (4/4)** |
+| Backend PG/Storage Pytest | `pytest tests/test_postgres_and_storage_integration.py tests/test_supabase_storage.py -v` | Portable async DB isolation (`TEST_DATABASE_URL` / SQLite fallback), consent history, project versioning, `StorageVaultService`, `SupabaseStorageAdapter` | **PASS (5/5)** |
+| Capacitor Android Sync | `npx cap sync android` | Syncs `dist/` assets & 9 Capacitor Android plugins | **PASS (`0.606s`)** |
+| Android JVM Unit Tests | `.\gradlew.bat --no-daemon testDebugUnitTest` | `ExampleUnitTest` (1) + `SecureVaultLogicTest` (3) | **PASS (4/4, 0 failures, 0 skipped)** |
+| Android Instrumented APK Build | `.\gradlew.bat --no-daemon assembleDebugAndroidTest` | `MainActivityInstrumentedTest` (2) + `ExampleInstrumentedTest` (1) packaged | **PASS (`app-debug-androidTest.apk`, `563,768` bytes)** |
+| Android Debug APK | `.\gradlew.bat --no-daemon assembleDebug` | `android/app/build/outputs/apk/debug/app-debug.apk` | **PASS (`8,208,368` bytes / `7.83 MB`)** |
+| Signed Android Release APK | `.\gradlew.bat --no-daemon assembleRelease` + `apksigner verify` | `android/app/build/outputs/apk/release/app-release.apk` | **PASS (`6,656,312` bytes / `6.35 MB`; `Verifies`, v1+v2 signed)** |
+| Signed Android App Bundle (AAB) | `.\gradlew.bat --no-daemon bundleRelease` + `jarsigner -verify` | `android/app/build/outputs/bundle/release/app-release.aab` | **PASS (`5,999,438` bytes / `5.72 MB`; `jar verified.`)** |
 
 ---
 
-## 2. Vitest Suite Breakdown (4 Files, 22/22 Passed)
+## 2. Vitest Suite Breakdown (4 Files, 31/31 Passed)
 
-1. **`src/tests/authAndSecurity.test.ts` (7 tests)**
-   - HTTPS enforcement for `staging`/`production`, protocol rejection, and local dev host (`10.0.2.2`, `localhost`, `127.0.0.1`) allowance.
-   - `SecureVault` session save/read/clear lifecycle without `logout` leakage.
-   - `isJwtExpired` skew boundary detection and malformed JWT rejection in `parseJwtPayload`.
-   - Global `401` interception purging token + invoking `onSessionExpired`.
-   - Automatic JWT rotation on `changePassword`.
-   - Mandatory `2026.1` consent versions on `register`.
-   - In-flight mutation deduplication (`runDedupedMutation`) + `renameProject` (`PATCH /projects/{id}/rename`) + empty title guard.
-
-2. **`src/tests/documentsAndNetwork.test.ts` (6 tests)**
-   - Magic-byte and structural validation for PDF, PNG, JPEG, WebP, DOCX, encrypted PDF (`/Encrypt`), spoofed PDF/DOCX, legacy OLE2 `.doc`, and max file size bounds.
-   - Exponential-backoff GET retry recovery on transient HTTP `503`.
-   - Clean `ApiError` surfacing on persistent network failures.
-   - Streaming `downloadDocument(id, onProgress)` progress increments (`[50, 99, 100]`) and exact byte reassembly.
-   - Pre-aborted and mid-stream `AbortSignal` cancellation + `401` purge during `downloadDocument`.
-   - `offlineStore` persistence & complete isolation wipe on `clearUserCaches()` (documents, jobs, usage, entitlements, local history, sync timestamp).
-
-3. **`src/tests/studiosEngines.test.ts` (5 tests)**
-   - PDF engine: `mergePdfFiles`, `splitPdfByRange`, `rotatePdfPage`, `duplicatePdfPage`, `insertBlankPage`, `reorderPdfPages`, `deletePdfPage`, `compressPdf`, `applyPdfAnnotations`, and `countTextOccurrencesInPdf`.
-   - Word engine: `sanitizeHtml` XSS stripping (`<script>`, `<iframe>`, `onclick`, `javascript:`), `htmlToDocxItems`, `createDocxBlob`, `extractTextFromDocxFile` round-trip, and `convertTextOrDocxToPdf`.
-   - PowerPoint engine: `createPresentationBlob`, `extractTextFromPptxFile`, and `convertSlidesToPdf`.
-   - Excel Sheets engine: `sanitizeWorkbookData` prototype-pollution defense, `evaluateCellFormula` (`=SUM`, `=AVERAGE`, `=MIN`, `=MAX`, `=COUNT`, `=IF`), `removeDuplicateRows`, `sortSheetRows`, `exportDataToXlsxBlob`, `parseSpreadsheetFile`, `exportDataToCsvBlob`, `convertSpreadsheetToPdf`.
-   - Conversion & Batch engine: `executeFileConversion` (`TXT->PDF`, `CSV->XLSX`, `MD->HTML`, `AbortSignal` cancellation), `createBatchZipArchive` filename deduplication (`notes.pdf`, `notes_2.pdf`), and `getConversionCompatibilityReport`.
-
-4. **`src/tests/uiComponents.test.tsx` (4 tests, `@testing-library/react`)**
-   - `AuthScreen`: tab switching (`Sign In` / `Register` / `Reset`), consent checkboxes, `Admin Portal Sign-In` switch (`role="switch"`), and credential submission.
-   - `ConfirmDialog`: `role="alertdialog"`, `aria-modal="true"`, confirm/cancel callbacks, `Escape` key dismissal, and `open={false}` unmount.
-   - `MobileLayout`: 5-tab navigation (`Home`, `Convert`, `PDF`, `Docs`, `Profile`), active `aria-current="page"`, `onSelectTab`, `Offline` pill, unread badge, and `subView` back navigation.
-   - `AdminScreen`: `403 Forbidden` guard blocking standard users with zero admin API calls, plus live telemetry rendering for server-verified `admin` users.
+1. **`src/tests/authAndSecurity.test.ts` (8 tests):** HTTPS URL enforcement & loopback rules, `SecureVault` session lifecycle, strict JWT structure & fail-closed `exp` validation, global `401` session wipe, automatic JWT rotation on `changePassword`, explicit `2026.1` AI consent opt-out/opt-in payloads, deep-link route allowlist & embedded-token rejection (`parseDeepLinkUrl`), and mutation deduplication / `renameProject`.
+2. **`src/tests/documentsAndNetwork.test.ts` (11 tests):** Magic-byte & structure validation (PDF `/Encrypt`, OLE2 `.doc`, spoofed containers, limits), exponential-backoff GET retry recovery (`503`), clean `ApiError` sanitization, streaming `downloadDocument` progress & exact byte reassembly, mid-stream/pre-abort `AbortSignal`, `401` abort wipe, distinct payload project update dedupe, sliced 64 KB SHA-256 upload fingerprint, encrypted per-user `offlineStore` isolation/TTL/tamper recovery, and 1 MB chunked native save/cancellation.
+3. **`src/tests/studiosEngines.test.ts` (7 tests):** PDF merge/split/rotate/delete/duplicate/insertBlank/reorder/compress/annotations/search, **genuine destructive PDF content-stream redaction (`status === 'Verified'`, `residualTextFound === false`, absent from PDF.js text & Latin-1 bytes)**, malformed XLSX/PPTX & 25 MB size caps with `@datalens-tech/xlsx` + `pptxgenjs`, `sanitizeHtml` XSS defenses & DOCX round-trip, spreadsheet formulas/sort/dedup, batch conversion/ZIP deduplication + magic-byte output validation (`validateConversionOutput`).
+4. **`src/tests/uiComponents.test.tsx` (5 tests):** `AuthScreen` tabs & default unchecked optional consents, `ConfirmDialog` accessibility (`role="alertdialog"`, `Escape`), `MobileLayout` 5-tab shell, **`AdminScreen` server `/admin/me` `403` block even with locally spoofed user role**, and **`WorkspacesScreen` role permissions & tab flows**.
 
 ---
 
-## 3. Live FastAPI Backend E2E Coverage (`scripts/run-backend-e2e.mjs` — 12/12 Passed)
+## 3. Live FastAPI Backend E2E Coverage (`scripts/run-backend-e2e.mjs` — 16/16 Passed)
 
-1. `GET /health` liveness check.
-2. `POST /api/v1/auth/register` (User A, `2026.1` consents).
-3. `POST /api/v1/auth/login` (JWT + metadata).
-4. `GET /api/v1/auth/me`, `/users/me/usage`, `/users/me/entitlements`.
-5. `POST /api/v1/documents/upload`, `GET /api/v1/documents`, `GET /api/v1/documents/{id}/download` (byte-for-byte match).
-6. **Cross-user / cross-tenant isolation:** User B registers in separate org and is blocked (`403`/`404`) from reading, downloading, or deleting User A's document, and omitted from `GET /documents`.
-7. `POST /api/v1/jobs` & `GET /api/v1/jobs`.
-8. **Cloud Projects lifecycle & isolation:** `POST /projects`, User B `403`/`404` isolation check, `PATCH /projects/{id}/rename` (`version: 1 -> 2`), stale `expected_version: 1` `409 Conflict` guard, `PUT /projects/{id}` (`version: 2 -> 3`), and `GET /projects/{id}/versions`.
-9. `GET /api/v1/notifications` & `PUT /api/v1/notifications/preferences`.
-10. Standard user RBAC check against `GET /api/v1/admin/telemetry` -> `403`.
-11. `POST /api/v1/users/me/change-password` -> old JWT rejected (`401`), rotated JWT accepted (`200`).
-12. Admin role promotion -> `POST /api/v1/admin/auth/login` + `GET /api/v1/admin/telemetry` (`200`), followed by `POST /api/v1/auth/logout` -> `/auth/me` returns `401`.
+1–12. Health check, User A register/login, profile/usage/entitlements, document upload/list/download integrity, User B cross-tenant `403`/`404` isolation, jobs lifecycle, cloud project create/rename (`PATCH`)/stale `expected_version` `409`/update (`PUT`)/versions, notifications & preferences, non-admin `/admin/telemetry` `403`, password change JWT rotation, admin portal login + telemetry, and logout JWT revocation (`401`).  
+13. **AI Consent Opt-Out & Audit History:** Registers `ai_consent: false` user and confirms `/auth/me` + `/auth/consent/history` preserve `ai_processing: false` while `terms_and_conditions` is `true`.  
+14. **Mobile One-Time Auth Code Exchange:** Creates opaque single-use code via `/auth/mobile-code`, exchanges via `/auth/mobile-code/exchange`, verifies replay returns `400`, and verifies untrusted `redirect_uri` returns `400`.  
+15. **Workspace Collaboration & Cross-Org Isolation:** Creates workspace, uploads & shares document, posts workspace message, and asserts cross-org `tokenB` receives `403` on `/workspaces/{id}/members` and `/workspaces/{id}/documents`.  
+16. **Tools Catalog & Local-AI RAG Index:** Verifies `/tools` listing and `/local-ai/rag/index/{doc_id}` indexing.
 
 ---
 
-## 4. Emulator / Physical Device Verification Status
+## 4. Android & PostgreSQL Runtime Verification Scope (Local vs. GitHub CI)
 
-- Automated UI tests ran in `jsdom` (`@testing-library/react`). No physical Android handset or booted AVD emulator was attached during CLI verification, so interactive device/emulator smoke testing should be performed in Android Studio Device Manager using `app-debug.apk`.
+- **Local Workstation Verification:** Runs real JVM JUnit tests (`4/4` passing including 3 `SecureVaultCrypto` AES-256-GCM tests), full `assembleDebugAndroidTest` instrumentation APK packaging, signed release APK/AAB cryptographic verification (`apksigner` & `jarsigner`), and SQLite + `StorageVaultService` + mocked `SupabaseStorageAdapter` pytest suites.
+- **Explicit Local Tooling Limitations:** Neither an Android Emulator AVD system image (`emulator -list-avds` empty) nor a local PostgreSQL server (`psql`/Docker absent) is installed on the local Windows workstation.
+- **CI Coverage:** `.github/workflows/mobile-ci.yml` executes `test_postgres_and_storage_integration.py` against a live `postgres:16-alpine` service container (`postgresql+asyncpg`), and `.github/workflows/android-build.yml` executes `./gradlew --no-daemon connectedDebugAndroidTest` (`MainActivityInstrumentedTest` + `ExampleInstrumentedTest`) on `reactivecircus/android-emulator-runner@v2` (API 34).

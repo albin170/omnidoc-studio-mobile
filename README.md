@@ -1,52 +1,55 @@
 # OmniDoc Studio Mobile
 
-Independent Android mobile application for **OmniDoc Studio 2.0**, built with **React 19**, **TypeScript**, **Tailwind CSS v4**, **Capacitor 7**, and **Android Studio / Gradle**.
+Independent Android application (`v2.1.0`, `versionCode: 2`, App ID `studio.omnidoc.mobile`) for **OmniDoc Studio**, built with **React 19**, **TypeScript**, **Tailwind CSS v4**, **Capacitor 7**, and **Android Studio / Gradle**.
 
-It connects directly to the existing **OmniDoc Studio FastAPI backend**, sharing the same PostgreSQL database, Supabase/S3 document storage, user accounts, roles, permissions, plan entitlements, and audit trail — with **zero modifications** to the original web repository.
+It connects directly to the shared **OmniDoc Studio FastAPI backend**, sharing the same PostgreSQL database, Supabase/S3 storage, user accounts, consents, workspaces, roles, permissions, plan entitlements, and audit trail.
 
 ---
 
-## Key Capabilities
+## Key Capabilities (`v2.1.0`)
 
-1. **Dashboard** — Shared vault storage quota, document/job counters, plan tier badge, global announcements, maintenance banner, and quick actions (Camera Scan -> PDF, Upload, Convert, Excel Sheets).
-2. **Document Library** — Search/filter vault files, upload with progress tracking & magic-byte validation, camera scan directly to PDF, native Android save (`Documents/OmniDoc/`) & share sheet, Digital Twin inspection, AI RAG indexing, and Cloud Projects viewer.
-3. **PDF Studio** — Offline-capable `pdfjs-dist` canvas viewer (local bundled worker), merge PDFs, split page ranges, rotate/delete pages, watermark & page numbering, text extraction, and multi-page camera scanning to PDF.
-4. **Conversion Studio** — On-device conversions (offline-capable) and server-side backend conversions (`/tools/invoke`) across PDF, DOCX, PPTX, XLSX, CSV, PNG, JPG, WEBP, TXT, HTML, and MD with cancellation and progress tracking.
-5. **Excel Sheets Studio** — Touch-optimized spreadsheet grid with sandbox-safe formula bar (`=SUM`, `=AVERAGE`, `=IF`, `=VLOOKUP`, etc.), multi-sheet tabs, row sorting & deduplication, Cloud Project sync (`/projects`), and `.xlsx` / `.csv` / `.pdf` export.
-6. **Processing History** — Unified view of backend autonomous jobs (`/jobs` with human-in-the-loop approve/reject & cancel) and offline-cached local conversion/PDF history.
-7. **User Profile** — View server identity/role/org, edit display name, change password (with automatic JWT rotation), view subscription status, and export GDPR SHA-256 user archive.
-8. **Account Settings** — Switch API environments (`production` / `staging` / `development`), verify HTTPS endpoints, configure notification preferences, manage privacy consents, manage developer API keys, clear offline cache, or purge account.
-9. **Notifications & Support** — Unread badge, category filters, mark read/all read, active announcements, and direct support messaging to administrators.
-10. **Administrator Console** — Strictly gated to server-verified `admin` / `superadmin` accounts (`POST /api/v1/admin/auth/login`), offering platform telemetry, user search & suspend/reactivate, global banner/maintenance controls, and audit log inspection.
+1. **Dashboard** — Shared storage quota gauge, document/job counters, plan tier badge, announcements, maintenance banner, and studio quick launchers.
+2. **Document Library** — Search/filter vault files, sliced-hash duplicate detection with progress tracking & magic-byte validation, Digital Twin inspection, AI RAG indexing, encrypted per-user offline caching (WebCrypto AES-GCM + TTL), Cloud Projects versioning/rename, and 384 KB chunked native save/share (`Documents/OmniDoc/`).
+3. **PDF Studio & Genuine Redaction** — Offline `pdfjs-dist` canvas viewer (bundled worker), merge, split, rotate/duplicate/reorder/blank/delete, zoom, search, compress, visual annotations/signature pad, multi-page camera scan, and **destructive `pako`-based PDF content-stream redaction** with binary + PDF.js verification.
+4. **Word, PowerPoint & Excel Sheets Studios** — Touch-optimized editors with XSS-safe HTML sanitization (`docxService`), `@datalens-tech/xlsx@^0.20.3` sandboxed formulas & sheets (`sheetService`), patched `image-size` (`>=2.2.0`) widescreen PPTX slides (`pptxService`), and Cloud Project sync (`/projects`).
+5. **Conversion Studio** — On-device and server-side `/tools/invoke` conversions across PDF, DOCX, PPTX, XLSX, CSV, PNG, JPG, WEBP, TXT, HTML, and MD with `device`/`cloud` fidelity badges, output magic-byte validation (`validateConversionOutput`), and deduplicated batch ZIP export.
+6. **OCR & Image Studio** — On-device PDF text extraction + Cloud `extract_fields`/Digital Twin OCR with clear offline indicator, multi-page scan queue, `.txt`/`.docx` export, image compression/resizing, and PDF-to-PNG rendering.
+7. **Team Workspaces** — Full 15-endpoint `/workspaces/*` integration: invitations inbox (accept/reject/invite), shared documents, role management, and team chat.
+8. **Processing History, Profile, Settings & Notifications** — Autonomous DAG jobs (`/jobs`), encrypted local history, password rotation (JWT `token_version`), optional `ai_consent` audit history, verified App Links + one-time `/auth/mobile-code/exchange`, and developer API keys.
+9. **Administrator Console** — Verified live against `GET /api/v1/admin/me` (`403` blocked otherwise), featuring telemetry, user search & suspend/reactivate, org subscription plan management, user entitlement overrides, global banners, and audit logs.
 
 ---
 
 ## Quick Start
 
-```bash
+```powershell
 # 1. Install dependencies
 npm install
 
 # 2. Configure optional local environment overrides (never commit .env.local)
-cp .env.example .env.local
+Copy-Item .env.example .env.local
 
-# 3. Run unit & engine tests
+# 3. Run typecheck, ESLint, Vitest unit/engine/UI tests, and audit
+npm run typecheck
+npm run lint
 npm test
+npm audit --omit=dev
 
 # 4. Build web bundle & sync Capacitor Android project
-npm run cap:sync
-
-# 5. Open in Android Studio or build APKs via Gradle
-npx cap open android
+npm run build
+npx cap sync android
 ```
 
 ---
 
-## Repository Documentation
+## Documentation Index
 
-- [Architecture & Phase 1 Web Repo Inspection](docs/ARCHITECTURE.md)
-- [Shared Backend API Integration](docs/API_INTEGRATION.md)
-- [Android Build & Emulator Guide](docs/ANDROID_BUILD.md)
-- [Security & Keystore Vault Design](docs/SECURITY.md)
-- [Testing & Verification Report](docs/TESTING.md)
-- [Release & Signing Guide](docs/RELEASE.md)
+- [`MOBILE_AUDIT_REPORT.md`](MOBILE_AUDIT_REPORT.md) — Security remediation & production readiness audit
+- [`MOBILE_SECURITY_REPORT.md`](MOBILE_SECURITY_REPORT.md) — Dependencies (`0` CVEs), `AndroidKeyStore`, AES-GCM cache, App Links, and PDF redaction security
+- [`MOBILE_ARCHITECTURE.md`](MOBILE_ARCHITECTURE.md) — Capacitor 7 + React 19 + Android native topology
+- [`MOBILE_API_INTEGRATION.md`](MOBILE_API_INTEGRATION.md) — Shared FastAPI endpoints, resilience & error sanitization
+- [`MOBILE_FEATURE_PARITY.md`](MOBILE_FEATURE_PARITY.md) — Web vs. Mobile feature matrix
+- [`MOBILE_TEST_REPORT.md`](MOBILE_TEST_REPORT.md) — Vitest (31/31), Backend E2E (16/16), Pytest, JUnit (4/4), and CI coverage
+- [`ANDROID_BUILD_GUIDE.md`](ANDROID_BUILD_GUIDE.md) — Gradle CLI, JDK 21 setup & emulator guide
+- [`DEPLOYMENT_GUIDE.md`](DEPLOYMENT_GUIDE.md) — Signed APK/AAB outputs (`apksigner` / `jarsigner`) & GitHub Actions workflows
+- [`CHANGELOG.md`](CHANGELOG.md) — Release history (`2.0.0` -> `2.1.0`)
