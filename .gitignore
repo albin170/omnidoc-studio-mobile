@@ -17,10 +17,16 @@ android/build/
 android/app/build/
 android/local.properties
 android/keystore.properties
+release-artifacts/
 *.jks
 *.keystore
 *.p12
 *.pem
+*.apk
+*.aab
+*.ipa
+*.xcarchive
+ios/App/Pods/
 
 # IDE & OS
 .DS_Store

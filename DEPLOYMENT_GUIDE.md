@@ -4,14 +4,12 @@
 
 ---
 
-## 1. Verified Release Artifacts (`v2.1.0`, `versionCode: 2`)
+## 1. Verified Release Artifacts (`v2.2.0`, `versionCode: 3`)
 
-| Artifact | Output Path | Exact Size | Verification |
+| Artifact | Output Path | Exact Size | SHA-256 / Verification |
 | :--- | :--- | :--- | :--- |
-| Debug APK | `android/app/build/outputs/apk/debug/app-debug.apk` | `8,208,368` bytes (`7.83 MB`) | Compiles & packages cleanly |
-| Instrumented Test APK | `android/app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk` | `563,768` bytes (`550.55 KB`) | Compiles & packages `MainActivityInstrumentedTest` + `ExampleInstrumentedTest` |
-| **Signed Release APK** | `android/app/build/outputs/apk/release/app-release.apk` | **`6,656,312` bytes (`6.35 MB`)** | `apksigner verify` -> `Verifies` (`v1`: true, `v2`: true; RSA-2048) |
-| **Signed App Bundle (AAB)** | `android/app/build/outputs/bundle/release/app-release.aab` | **`5,999,438` bytes (`5.72 MB`)** | `jarsigner -verify` -> `jar verified.` |
+| **Signed R8 Release APK** | `release-artifacts/v2.2.0/omnidoc-studio-v2.2.0.apk` | **`3,271,703` bytes (`3.12 MB`)** | `036fc11c2e223fc67e776641e5f63346d8144c40dd81f20573f41049fe32e3b2` (`apksigner verify`: `Verifies`, v1+v2 signed) |
+| **Signed R8 App Bundle (AAB)** | `release-artifacts/v2.2.0/omnidoc-studio-v2.2.0.aab` | **`4,076,727` bytes (`3.89 MB`)** | `f19f4f89738366e2d288fcb77b45141837581f6970b78e4c52c759dfd80b8b60` (`jarsigner -verify`: `jar verified.`) |
 
 **Signer Certificate (`apksigner verify --print-certs`):**
 - DN: `CN=OmniDoc Studio Mobile, OU=Mobile Engineering, O=OmniDoc Studio, L=Bengaluru, ST=KA, C=IN`

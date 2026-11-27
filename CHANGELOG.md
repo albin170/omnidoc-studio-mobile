@@ -1,5 +1,20 @@
 # Changelog — OmniDoc Studio Mobile
 
+## [2.2.0] — Android R8 Release, iOS Platform & GitHub Release Automation (`versionCode: 3`)
+
+### Android Production Build & R8 Minification
+- Enabled R8 code shrinking (`minifyEnabled true`) and resource shrinking (`shrinkResources true`) in `android/app/build.gradle` with Capacitor 7 & `SecureVaultPlugin` keep rules in `android/app/proguard-rules.pro`, reducing signed `omnidoc-studio-v2.2.0.apk` to **`3,271,703` bytes (`3.12 MB`)** and `omnidoc-studio-v2.2.0.aab` to **`4,076,727` bytes (`3.89 MB`)**.
+- Verified signatures via `apksigner` (`v1 + v2`) and `jarsigner`, generated real artifact checksums (`SHA256SUMS.txt` & `release-manifest.json`), and bumped `versionCode 3` / `versionName "2.2.0"`.
+
+### iOS Capacitor Platform & Apple Keychain Bridge
+- Added `@capacitor/ios@^7.4.4` and native Xcode workspace (`ios/App/`), configured `Info.plist` privacy usage descriptions, file sharing, `omnidoc://` URL scheme, Associated Domains (`applinks:omnidoc-studio-jet.vercel.app`), `1024x1024` opaque `AppIcon`, and implemented `SecureVaultPlugin.swift` + `OmniDocBridgeViewController.swift` using Apple Security Keychain.
+- Updated `src/services/secureStorage.ts` to support `'ios_keychain'` alongside `'android_keystore'` and `'web_session'` (Vitest expanded to **32/32**).
+- Documented exact Apple Developer signing requirements in [`IOS_DEPLOYMENT_GUIDE.md`](IOS_DEPLOYMENT_GUIDE.md).
+
+### Automated Release Pipelines
+- Added [`.github/workflows/release-android.yml`](.github/workflows/release-android.yml) (version validation, quality gates, secret-backed keystore signing, `apksigner`/`jarsigner` checks, `SHA256SUMS.txt` + `release-manifest.json`, GitHub Release upload, post-release asset reachability check, and Download Center dispatch).
+- Added [`.github/workflows/release-ios.yml`](.github/workflows/release-ios.yml) (`macos-14` iOS Simulator check + conditional signed archive/IPA export when Apple secrets are present).
+
 ## [2.1.0] — Security Remediation, Integrity, Workspaces & Release Readiness (`versionCode: 2`)
 
 ### Critical Security Remediations
