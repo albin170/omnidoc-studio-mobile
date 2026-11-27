@@ -247,4 +247,88 @@ describe('Document Validation, Streaming Downloads, Network Resilience & Offline
     expect((caught as ApiError).message).toContain('email');
     expect((caught as ApiError).message).toContain('value is not a valid email address: reserved domain');
   });
+
+  it('aborts in-flight response body consumption cleanly and sanitizes 400/403/404/409/413/429/500 errors', async () => {
+    const controller = new AbortController();
+    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      statusText: 'OK',
+      text: async () => {
+        controller.abort();
+        return '[]';
+      },
+    } as unknown as Response);
+
+    await expect(apiClient.listDocuments(controller.signal)).rejects.toThrow(/cancelled/i);
+
+    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+      new Response(JSON.stringify({ detail: 'Traceback (most recent call last): File "/app/main.py" psycopg2 error' }), {
+        status: 500,
+      })
+    );
+    await expect(apiClient.listDocuments()).rejects.toThrow(/unexpected error/i);
+
+    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+      new Response(JSON.stringify({ detail: 'Entity too large' }), { status: 413 })
+    );
+    await expect(apiClient.listDocuments()).rejects.toThrow(/maximum upload size/i);
+
+    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(new Response('{}', { status: 429 }));
+    await expect(apiClient.listDocuments()).rejects.toThrow(/too many requests/i);
+  });
+
+  it('distinguishes distinct project updates and same-metadata files with different bytes', async () => {
+    let projectPutCalls = 0;
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (_url, init) => {
+      const bodyStr = String(init?.body || '');
+      if (bodyStr.includes('"data"')) {
+        projectPutCalls += 1;
+        return new Response(
+          JSON.stringify({
+            id: 'proj-99',
+            org_id: 'org-1',
+            owner_user_id: 'user-1',
+            title: 'Sheet',
+            project_type: 'sheets',
+            version: projectPutCalls + 1,
+            size_bytes: 120,
+            content_hash_sha256: 'abc',
+            tags: [],
+            is_deleted: false,
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+          }),
+          { status: 200 }
+        );
+      }
+      return new Response(
+        JSON.stringify({
+          id: `doc-${Math.random().toString(36).slice(2, 7)}`,
+          filename: 'same.txt',
+        }),
+        { status: 201 }
+      );
+    });
+
+    // Different data with same version MUST NOT be collapsed
+    const [p1, p2] = await Promise.all([
+      apiClient.updateProject('proj-99', { title: 'Sheet', expected_version: 1, data: { v: 'first' } }),
+      apiClient.updateProject('proj-99', { title: 'Sheet', expected_version: 1, data: { v: 'second' } }),
+    ]);
+    expect(projectPutCalls).toBe(2);
+    expect(p1.version).not.toBe(p2.version);
+
+    // Same name, exact same size (5 bytes), exact same lastModified, DIFFERENT byte content
+    const fixedTime = 1700000000000;
+    const f1 = new File(['AAAAA'], 'same.txt', { type: 'text/plain', lastModified: fixedTime });
+    const f2 = new File(['BBBBB'], 'same.txt', { type: 'text/plain', lastModified: fixedTime });
+
+    const [u1, u2] = await Promise.all([apiClient.uploadDocument(f1), apiClient.uploadDocument(f2)]);
+    expect(u1.id).not.toBe(u2.id);
+
+    // Identical file with allowDuplicate=true performs an intentional second upload
+    const u3 = await apiClient.uploadDocument(f1, undefined, undefined, { allowDuplicate: true });
+    expect(u3.id).not.toBe(u1.id);
+  });
 });

@@ -38,55 +38,165 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-function extractApiErrorMessage(body: unknown, fallback: string): string {
-  if (!isRecord(body)) {
-    return fallback;
+function sanitizeUserErrorText(text: string): string {
+  const trimmed = text.trim();
+  if (!trimmed) return '';
+  if (
+    /traceback\s*\(most recent call last\)|sqlalchemy\.|psycopg2\.|asyncpg\.|select\s+.+\s+from\s+|insert\s+into\s+|file\s+"[^"]+\.py"/i.test(
+      trimmed
+    )
+  ) {
+    return 'Server encountered an unexpected error. Please try again shortly.';
+  }
+  return trimmed.slice(0, 320);
+}
+
+function extractApiErrorMessage(body: unknown, status: number, fallback: string): string {
+  if (status === 413) {
+    return 'File exceeds maximum upload size allowed by your plan or server.';
+  }
+  if (status === 429) {
+    return 'Too many requests. Please wait a moment and try again.';
+  }
+  if (status >= 500) {
+    return 'Server encountered an unexpected error. Please try again shortly.';
   }
 
-  if (typeof body.detail === 'string' && body.detail.trim()) {
-    return body.detail.trim();
-  }
+  if (isRecord(body)) {
+    if (typeof body.detail === 'string' && body.detail.trim()) {
+      return sanitizeUserErrorText(body.detail);
+    }
 
-  if (Array.isArray(body.detail) && body.detail.length > 0) {
-    const formatted = body.detail
-      .map((item) => {
-        if (!isRecord(item)) return '';
-        const msg =
-          typeof item.msg === 'string' && item.msg.trim()
-            ? item.msg.trim()
-            : typeof item.message === 'string' && item.message.trim()
-              ? item.message.trim()
-              : '';
-        if (!msg) return '';
-        const locParts = Array.isArray(item.loc)
-          ? item.loc
-              .filter((part, idx) => {
-                const text = String(part ?? '').trim();
-                if (!text) return false;
-                if (idx === 0 && (text === 'body' || text === 'query' || text === 'path')) return false;
-                return true;
-              })
-              .map((part) => String(part).trim())
-          : [];
-        return locParts.length > 0 ? `${locParts.join('.')}: ${msg}` : msg;
-      })
-      .filter(Boolean)
-      .join('; ');
+    if (Array.isArray(body.detail) && body.detail.length > 0) {
+      const formatted = body.detail
+        .map((item) => {
+          if (!isRecord(item)) return '';
+          const msg =
+            typeof item.msg === 'string' && item.msg.trim()
+              ? item.msg.trim()
+              : typeof item.message === 'string' && item.message.trim()
+                ? item.message.trim()
+                : '';
+          if (!msg) return '';
+          const locParts = Array.isArray(item.loc)
+            ? item.loc
+                .filter((part, idx) => {
+                  const text = String(part ?? '').trim();
+                  if (!text) return false;
+                  if (idx === 0 && (text === 'body' || text === 'query' || text === 'path')) return false;
+                  return true;
+                })
+                .map((part) => String(part).trim())
+            : [];
+          return locParts.length > 0 ? `${locParts.join('.')}: ${msg}` : msg;
+        })
+        .filter(Boolean)
+        .join('; ');
 
-    if (formatted) {
-      return formatted;
+      if (formatted) {
+        return sanitizeUserErrorText(formatted);
+      }
+    }
+
+    if (isRecord(body.detail) && typeof body.detail.message === 'string' && body.detail.message.trim()) {
+      return sanitizeUserErrorText(body.detail.message);
+    }
+
+    if (typeof body.message === 'string' && body.message.trim()) {
+      return sanitizeUserErrorText(body.message);
     }
   }
 
-  if (isRecord(body.detail) && typeof body.detail.message === 'string' && body.detail.message.trim()) {
-    return body.detail.message.trim();
-  }
-
-  if (typeof body.message === 'string' && body.message.trim()) {
-    return body.message.trim();
-  }
+  if (status === 400) return 'Invalid request parameters.';
+  if (status === 403) return 'Access denied for this resource or action.';
+  if (status === 404) return 'Requested resource was not found.';
+  if (status === 409) return 'Conflict detected: the resource was modified concurrently.';
 
   return fallback;
+}
+
+function canonicalStringify(value: unknown, depth = 0): string {
+  if (depth > 8 || value === null || value === undefined) return String(value);
+  if (typeof value !== 'object') return JSON.stringify(value);
+  if (Array.isArray(value)) {
+    return `[${value.map((item) => canonicalStringify(item, depth + 1)).join(',')}]`;
+  }
+  const keys = Object.keys(value as Record<string, unknown>).sort();
+  return `{${keys
+    .map((k) => `${JSON.stringify(k)}:${canonicalStringify((value as Record<string, unknown>)[k], depth + 1)}`)
+    .join(',')}}`;
+}
+
+function computePayloadDigest(value: unknown): string {
+  const input = canonicalStringify(value);
+  let h1 = 0x811c9dc5;
+  let h2 = 0x01000193;
+  for (let i = 0; i < input.length; i++) {
+    const c = input.charCodeAt(i);
+    h1 ^= c;
+    h1 = Math.imul(h1, 0x01000193) >>> 0;
+    h2 ^= c + i;
+    h2 = Math.imul(h2, 0x85ebca6b) >>> 0;
+  }
+  return `${h1.toString(16).padStart(8, '0')}${h2.toString(16).padStart(8, '0')}`;
+}
+
+async function computeFileIdentityKey(file: File): Promise<string> {
+  const SLICE_BYTES = 64 * 1024;
+  const parts: Uint8Array[] = [];
+  const metaBytes = new TextEncoder().encode(
+    `${file.name}|${file.size}|${file.lastModified}|${file.type || ''}|`
+  );
+  parts.push(metaBytes);
+
+  if (typeof file.slice === 'function' && file.size > 0) {
+    const ranges: Array<[number, number]> = [[0, Math.min(file.size, SLICE_BYTES)]];
+    if (file.size > SLICE_BYTES * 2) {
+      const midStart = Math.max(SLICE_BYTES, Math.floor(file.size / 2 - SLICE_BYTES / 2));
+      ranges.push([midStart, Math.min(file.size, midStart + SLICE_BYTES)]);
+    }
+    if (file.size > SLICE_BYTES) {
+      ranges.push([Math.max(0, file.size - SLICE_BYTES), file.size]);
+    }
+    for (const [start, end] of ranges) {
+      try {
+        const buf = await file.slice(start, end).arrayBuffer();
+        parts.push(new Uint8Array(buf));
+      } catch {
+        // fallback cleanly using metadata
+      }
+    }
+  }
+
+  const totalLen = parts.reduce((acc, p) => acc + p.byteLength, 0);
+  const merged = new Uint8Array(totalLen);
+  let offset = 0;
+  for (const p of parts) {
+    merged.set(p, offset);
+    offset += p.byteLength;
+  }
+
+  try {
+    if (typeof crypto !== 'undefined' && crypto.subtle?.digest) {
+      const digest = await crypto.subtle.digest('SHA-256', merged);
+      return Array.from(new Uint8Array(digest))
+        .map((b) => b.toString(16).padStart(2, '0'))
+        .join('')
+        .slice(0, 32);
+    }
+  } catch {
+    // fallback to fast deterministic hash
+  }
+
+  let h1 = 0x811c9dc5;
+  let h2 = 0x01000193;
+  for (let i = 0; i < merged.length; i++) {
+    h1 ^= merged[i];
+    h1 = Math.imul(h1, 0x01000193) >>> 0;
+    h2 ^= merged[i] ^ (i & 0xff);
+    h2 = Math.imul(h2, 0x85ebca6b) >>> 0;
+  }
+  return `${h1.toString(16).padStart(8, '0')}${h2.toString(16).padStart(8, '0')}_${file.size}`;
 }
 
 function assertRecord(value: unknown, context: string): Record<string, unknown> {
@@ -249,8 +359,6 @@ export class OmniDocMobileApiClient {
           headers,
           signal: controller.signal,
         });
-        clearTimeout(timer);
-        externalSignal?.removeEventListener('abort', onExternalAbort);
 
         if (res.status === 401 && !options.skipAuth) {
           this.token = null;
@@ -261,7 +369,7 @@ export class OmniDocMobileApiClient {
 
         if (!res.ok) {
           const body = await res.json().catch(() => ({ detail: res.statusText }));
-          const message = extractApiErrorMessage(body, `HTTP ${res.status}: ${res.statusText}`);
+          const message = extractApiErrorMessage(body, res.status, `HTTP ${res.status}: ${res.statusText}`);
 
           if (RETRYABLE_STATUSES.has(res.status) && attempt < maxRetries) {
             await sleep(300 * Math.pow(2, attempt));
@@ -271,6 +379,12 @@ export class OmniDocMobileApiClient {
         }
 
         const text = await res.text();
+        if (externalSignal?.aborted) {
+          throw new ApiError('Request cancelled.', 0);
+        }
+        if (controller.signal.aborted) {
+          throw new ApiError('Request timed out. Check your network connection.', 0);
+        }
         if (!text) return {} as T;
         try {
           return JSON.parse(text) as T;
@@ -278,24 +392,31 @@ export class OmniDocMobileApiClient {
           throw new ApiError('Server returned malformed JSON response.', 502);
         }
       } catch (err: any) {
-        clearTimeout(timer);
-        externalSignal?.removeEventListener('abort', onExternalAbort);
         if (err instanceof ApiError) {
           throw err;
         }
-        if (externalSignal?.aborted) {
+        if (externalSignal?.aborted || controller.signal.reason === 'cancelled') {
           throw new ApiError('Request cancelled.', 0);
         }
-        const isAbort = err?.name === 'AbortError' || controller.signal.aborted;
+        if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+          throw new ApiError('Network unavailable. Check your internet connection and retry.', 0);
+        }
+        const isTimeout =
+          controller.signal.reason === 'timeout' || err?.name === 'AbortError' || controller.signal.aborted;
         lastError = new ApiError(
-          isAbort ? 'Request timed out. Check your network connection.' : err?.message || 'Network request failed',
+          isTimeout
+            ? 'Request timed out. Check your network connection.'
+            : sanitizeUserErrorText(err?.message || '') || 'Network request failed',
           0
         );
-        if (attempt < maxRetries && !isAbort) {
+        if (attempt < maxRetries && !isTimeout) {
           await sleep(300 * Math.pow(2, attempt));
           continue;
         }
         throw lastError;
+      } finally {
+        clearTimeout(timer);
+        externalSignal?.removeEventListener('abort', onExternalAbort);
       }
     }
 
@@ -638,7 +759,8 @@ export class OmniDocMobileApiClient {
   public async uploadDocument(
     file: File,
     onProgress?: (percent: number) => void,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    options?: { allowDuplicate?: boolean }
   ): Promise<BackendDocument> {
     if (signal?.aborted) {
       throw new ApiError('Upload cancelled.', 0);
@@ -711,7 +833,7 @@ export class OmniDocMobileApiClient {
             } else {
               reject(
                 new ApiError(
-                  extractApiErrorMessage(parsed, `Upload failed (${xhr.status})`),
+                  extractApiErrorMessage(parsed, xhr.status, `Upload failed (${xhr.status})`),
                   xhr.status,
                   parsed
                 )
@@ -747,7 +869,6 @@ export class OmniDocMobileApiClient {
         const headers: Record<string, string> = {};
         if (token) headers['Authorization'] = `Bearer ${token}`;
         const res = await fetch(url, { method: 'POST', headers, body: formData, signal: controller.signal });
-        clearTimeout(timer);
 
         if (res.status === 401) {
           this.token = null;
@@ -757,7 +878,7 @@ export class OmniDocMobileApiClient {
         }
         if (!res.ok) {
           const body = await res.json().catch(() => ({ detail: res.statusText }));
-          throw new ApiError(extractApiErrorMessage(body, 'Upload failed'), res.status, body);
+          throw new ApiError(extractApiErrorMessage(body, res.status, 'Upload failed'), res.status, body);
         }
         const json = await res.json().catch(() => null);
         const validated = validateDocumentShape(json, 'uploadDocument');
@@ -765,21 +886,27 @@ export class OmniDocMobileApiClient {
         return validated;
       } catch (err: any) {
         if (err instanceof ApiError) throw err;
-        if (signal?.aborted) throw new ApiError('Upload cancelled.', 0);
+        if (signal?.aborted || controller.signal.reason === 'cancelled') {
+          throw new ApiError('Upload cancelled.', 0);
+        }
+        if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+          throw new ApiError('Network unavailable during upload.', 0);
+        }
         if (err?.name === 'AbortError' || controller.signal.aborted) {
           throw new ApiError('Upload timed out. Check connection stability.', 0);
         }
-        throw new ApiError(err?.message || 'Upload failed', 0);
+        throw new ApiError(sanitizeUserErrorText(err?.message || '') || 'Upload failed', 0);
       } finally {
         clearTimeout(timer);
         signal?.removeEventListener('abort', onExternalAbort);
       }
     };
 
-    if (signal) {
+    if (signal || options?.allowDuplicate) {
       return executeUpload();
     }
-    const dedupeKey = `POST:/documents/upload:${file.name}:${file.size}:${file.lastModified}`;
+    const fingerprint = await computeFileIdentityKey(file);
+    const dedupeKey = `POST:/documents/upload:${fingerprint}`;
     return this.runDedupedMutation(dedupeKey, executeUpload);
   }
 
@@ -817,7 +944,7 @@ export class OmniDocMobileApiClient {
       if (!res.ok) {
         const err = await res.json().catch(() => ({ detail: res.statusText }));
         throw new ApiError(
-          extractApiErrorMessage(err, 'Document download failed'),
+          extractApiErrorMessage(err, res.status, 'Document download failed'),
           res.status,
           (isRecord(err) ? err.detail : undefined) ?? err
         );
@@ -917,7 +1044,8 @@ export class OmniDocMobileApiClient {
     },
     signal?: AbortSignal
   ): Promise<CloudProjectDetail> {
-    const key = `POST:/projects:${payload.project_type}:${payload.title.trim()}:${payload.client_id || ''}`;
+    const digest = computePayloadDigest({ data: payload.data, tags: payload.tags, note: payload.note });
+    const key = `POST:/projects:${payload.project_type}:${payload.title.trim()}:${payload.client_id || ''}:${digest}`;
     return this.runDedupedMutation(key, async () => {
       const res = await this.requestJson(
         '/projects',
@@ -936,7 +1064,12 @@ export class OmniDocMobileApiClient {
     payload: { title?: string; data?: any; note?: string; expected_version?: number; force_overwrite?: boolean },
     signal?: AbortSignal
   ): Promise<CloudProjectDetail> {
-    const key = `PUT:/projects/${projectId}:${payload.expected_version ?? 'any'}:${payload.title ?? ''}`;
+    const digest = computePayloadDigest({
+      data: payload.data,
+      note: payload.note,
+      force: payload.force_overwrite,
+    });
+    const key = `PUT:/projects/${projectId}:${payload.expected_version ?? 'any'}:${payload.title ?? ''}:${digest}`;
     return this.runDedupedMutation(key, async () => {
       const res = await this.requestJson(
         `/projects/${encodeURIComponent(projectId)}`,
