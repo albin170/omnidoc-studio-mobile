@@ -28,7 +28,8 @@ public class SecureVaultLogicTest {
 
         assertNotNull(encrypted1);
         assertFalse(encrypted1.contains(secretJwt));
-        // Random IV guarantees semantically secure distinct ciphertexts for identical plaintexts
+        // Random IV guarantees semantically secure distinct ciphertexts for identical
+        // plaintexts
         assertNotEquals(encrypted1, encrypted2);
 
         byte[] raw1 = SecureVaultCrypto.decodeBase64(encrypted1);

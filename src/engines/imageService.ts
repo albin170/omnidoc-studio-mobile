@@ -122,3 +122,58 @@ export async function convertImageFormat(
     URL.revokeObjectURL(url);
   }
 }
+
+export async function compressAndResizeImage(
+  file: File | Blob,
+  options: { maxDimension?: number; quality?: number; format?: 'jpeg' | 'png' | 'webp' } = {}
+): Promise<{ blob: Blob; width: number; height: number; originalSize: number; compressedSize: number }> {
+  const maxDimension = Math.max(128, Math.min(4096, options.maxDimension ?? 1600));
+  const quality = Math.max(0.2, Math.min(0.95, options.quality ?? 0.78));
+  const targetFormat = options.format ?? 'jpeg';
+  const img = new Image();
+  const url = URL.createObjectURL(file);
+
+  try {
+    await new Promise((resolve, reject) => {
+      img.onload = resolve;
+      img.onerror = () => reject(new Error('Unable to decode image for compression.'));
+      img.src = url;
+    });
+
+    const natW = Math.max(1, img.naturalWidth || img.width);
+    const natH = Math.max(1, img.naturalHeight || img.height);
+    const ratio = Math.min(1, maxDimension / Math.max(natW, natH));
+    const outW = Math.max(1, Math.round(natW * ratio));
+    const outH = Math.max(1, Math.round(natH * ratio));
+
+    const canvas = document.createElement('canvas');
+    canvas.width = outW;
+    canvas.height = outH;
+    try {
+      const ctx = canvas.getContext('2d');
+      if (!ctx) throw new Error('Canvas 2D context unavailable for compression.');
+      if (targetFormat === 'jpeg') {
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(0, 0, outW, outH);
+      }
+      ctx.drawImage(img, 0, 0, outW, outH);
+
+      const mime = `image/${targetFormat}`;
+      const blob = await new Promise<Blob>((resolve, reject) => {
+        canvas.toBlob((b) => (b ? resolve(b) : reject(new Error('Image compression encoding failed.'))), mime, quality);
+      });
+      return {
+        blob,
+        width: outW,
+        height: outH,
+        originalSize: file.size,
+        compressedSize: blob.size,
+      };
+    } finally {
+      canvas.width = 0;
+      canvas.height = 0;
+    }
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+}

@@ -110,11 +110,10 @@ export const AuthScreen: React.FC = () => {
         {(sessionNotice || error || info) && (
           <div
             role="alert"
-            className={`p-3.5 rounded-xl text-xs border ${
-              error || sessionNotice
+            className={`p-3.5 rounded-xl text-xs border ${error || sessionNotice
                 ? 'bg-rose-950/70 border-rose-500/40 text-rose-200'
                 : 'bg-emerald-950/70 border-emerald-500/40 text-emerald-200'
-            }`}
+              }`}
           >
             {error || sessionNotice || info}
           </div>
@@ -137,9 +136,8 @@ export const AuthScreen: React.FC = () => {
                 setError(null);
                 setInfo(null);
               }}
-              className={`py-2.5 text-xs font-semibold rounded-lg transition-colors ${
-                mode === t.id ? 'bg-indigo-600 text-white shadow-sm' : 'text-slate-400 hover:text-slate-200'
-              }`}
+              className={`py-2.5 text-xs font-semibold rounded-lg transition-colors ${mode === t.id ? 'bg-indigo-600 text-white shadow-sm' : 'text-slate-400 hover:text-slate-200'
+                }`}
             >
               {t.label}
             </button>
@@ -159,15 +157,13 @@ export const AuthScreen: React.FC = () => {
                 role="switch"
                 aria-checked={adminMode}
                 onClick={() => setAdminMode((v) => !v)}
-                className={`w-11 h-6 rounded-full transition-colors p-0.5 ${
-                  adminMode ? 'bg-amber-500' : 'bg-slate-700'
-                }`}
+                className={`w-11 h-6 rounded-full transition-colors p-0.5 ${adminMode ? 'bg-amber-500' : 'bg-slate-700'
+                  }`}
                 aria-label="Toggle admin login mode"
               >
                 <div
-                  className={`w-5 h-5 rounded-full bg-white transition-transform ${
-                    adminMode ? 'translate-x-5' : 'translate-x-0'
-                  }`}
+                  className={`w-5 h-5 rounded-full bg-white transition-transform ${adminMode ? 'translate-x-5' : 'translate-x-0'
+                    }`}
                 />
               </button>
             </div>
@@ -356,14 +352,14 @@ export const AuthScreen: React.FC = () => {
             {busy
               ? 'Authenticating...'
               : mode === 'login'
-              ? adminMode
-                ? 'Sign In as Administrator'
-                : 'Sign In to OmniDoc'
-              : mode === 'register'
-              ? 'Create Shared Account'
-              : resetRequested
-              ? 'Confirm Password Reset'
-              : 'Send Reset Instructions'}
+                ? adminMode
+                  ? 'Sign In as Administrator'
+                  : 'Sign In to OmniDoc'
+                : mode === 'register'
+                  ? 'Create Shared Account'
+                  : resetRequested
+                    ? 'Confirm Password Reset'
+                    : 'Send Reset Instructions'}
           </button>
         </form>
 
@@ -392,11 +388,10 @@ export const AuthScreen: React.FC = () => {
                       setSelectedEnv(env);
                       setCustomUrl(DEFAULT_URLS[env]);
                     }}
-                    className={`py-2 rounded-lg text-[11px] font-medium capitalize border ${
-                      selectedEnv === env
+                    className={`py-2 rounded-lg text-[11px] font-medium capitalize border ${selectedEnv === env
                         ? 'bg-cyan-500/15 border-cyan-500/40 text-cyan-300'
                         : 'bg-slate-950 border-slate-800 text-slate-400'
-                    }`}
+                      }`}
                   >
                     {env}
                   </button>

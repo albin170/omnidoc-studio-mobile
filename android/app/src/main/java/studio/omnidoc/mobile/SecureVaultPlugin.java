@@ -51,8 +51,7 @@ public class SecureVaultPlugin extends Plugin {
         KeyGenerator keyGenerator = KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, ANDROID_KEYSTORE);
         KeyGenParameterSpec spec = new KeyGenParameterSpec.Builder(
                 KEY_ALIAS,
-                KeyProperties.PURPOSE_ENCRYPT | KeyProperties.PURPOSE_DECRYPT
-        )
+                KeyProperties.PURPOSE_ENCRYPT | KeyProperties.PURPOSE_DECRYPT)
                 .setBlockModes(KeyProperties.BLOCK_MODE_GCM)
                 .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
                 .setKeySize(SecureVaultCrypto.KEY_SIZE_BITS)
@@ -170,7 +169,8 @@ public class SecureVaultPlugin extends Plugin {
             }
             call.resolve(ret);
         } catch (AEADBadTagException | KeyPermanentlyInvalidatedException | IllegalArgumentException e) {
-            // Tampered ciphertext or invalidated hardware key: fail closed & purge corrupted entry
+            // Tampered ciphertext or invalidated hardware key: fail closed & purge
+            // corrupted entry
             getPrefs().edit().remove(key).apply();
             JSObject ret = new JSObject();
             ret.put("value", null);

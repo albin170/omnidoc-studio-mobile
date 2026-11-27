@@ -119,8 +119,14 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({ unreadCount = 0, o
     {
       id: 'studios_hub',
       title: 'All Document Studios',
-      subtitle: 'Word, PowerPoint, Excel Sheets, PDF, Converter & AI',
+      subtitle: 'Word, PowerPoint, Excel Sheets, PDF, OCR, Converter & AI',
       icon: <Layers className="w-5 h-5 text-emerald-400" />,
+    },
+    {
+      id: 'workspaces',
+      title: 'Team Workspaces',
+      subtitle: 'Shared folders, team member roles, invites & collaboration',
+      icon: <UserCheck className="w-5 h-5 text-sky-400" />,
     },
     {
       id: 'ai_assistant',

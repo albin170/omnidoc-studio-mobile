@@ -12,6 +12,7 @@ import { DashboardScreen } from './screens/DashboardScreen';
 import { HistoryScreen } from './screens/HistoryScreen';
 import { LibraryScreen } from './screens/LibraryScreen';
 import { NotificationsScreen } from './screens/NotificationsScreen';
+import { OcrImageStudioScreen } from './screens/OcrImageStudioScreen';
 import { PdfStudioScreen } from './screens/PdfStudioScreen';
 import { ProfileScreen } from './screens/ProfileScreen';
 import { SettingsScreen } from './screens/SettingsScreen';
@@ -19,6 +20,7 @@ import { SheetsStudioScreen } from './screens/SheetsStudioScreen';
 import { SlidesStudioScreen } from './screens/SlidesStudioScreen';
 import { StudiosHubScreen } from './screens/StudiosHubScreen';
 import { WordStudioScreen } from './screens/WordStudioScreen';
+import { WorkspacesScreen } from './screens/WorkspacesScreen';
 import { apiClient } from './services/apiClient';
 import { captureDocumentPhoto, isNativePlatform, registerAppLifecycle } from './services/nativeBridge';
 import { CloudProjectDetail, MobileSubView, MobileTab } from './types';
@@ -35,6 +37,8 @@ const SUBVIEW_TITLES: Record<Exclude<MobileSubView, 'none'>, string> = {
   word_studio: 'Word Studio',
   slides_studio: 'PowerPoint Slides',
   sheets_studio: 'Excel Sheets',
+  ocr_studio: 'OCR & Image Studio',
+  workspaces: 'Team Workspaces',
   studios_hub: 'Document Studios',
   history: 'Document History',
   notifications: 'Notifications',
@@ -171,6 +175,13 @@ const MobileShell: React.FC = () => {
       case 'sheets_studio':
         setSubView('sheets_studio');
         break;
+      case 'ocr':
+      case 'ocr_studio':
+        setSubView('ocr_studio');
+        break;
+      case 'workspaces':
+        setSubView('workspaces');
+        break;
       case 'studios':
       case 'studios_hub':
         setSubView('studios_hub');
@@ -240,6 +251,12 @@ const MobileShell: React.FC = () => {
     }
     if (subView === 'sheets_studio') {
       return <SheetsStudioScreen initialFile={sheetFile} initialProject={sheetProject} onToast={showToast} />;
+    }
+    if (subView === 'ocr_studio') {
+      return <OcrImageStudioScreen onToast={showToast} />;
+    }
+    if (subView === 'workspaces') {
+      return <WorkspacesScreen onToast={showToast} />;
     }
     if (subView === 'studios_hub') {
       return (

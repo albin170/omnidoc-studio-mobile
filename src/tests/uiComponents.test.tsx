@@ -5,7 +5,8 @@ import { ConfirmDialog } from '../components/ConfirmDialog';
 import { MobileLayout } from '../components/MobileLayout';
 import { AdminScreen } from '../screens/AdminScreen';
 import { AuthScreen } from '../screens/AuthScreen';
-import { apiClient } from '../services/apiClient';
+import { WorkspacesScreen } from '../screens/WorkspacesScreen';
+import { apiClient, ApiError } from '../services/apiClient';
 import { AuthSessionMeta } from '../types';
 
 const mockUseAuth = vi.fn();
@@ -208,14 +209,79 @@ describe('Mobile React UI Components & Security Guards', () => {
       failed_jobs: 0,
       environment: 'production',
     });
+    vi.spyOn(apiClient, 'verifyAdminSession').mockResolvedValue({
+      id: 'user-1',
+      email: 'admin@omnidoc.local',
+      role: 'admin',
+    });
     vi.spyOn(apiClient, 'getAdminUsers').mockResolvedValue([]);
     vi.spyOn(apiClient, 'getAdminUiConfig').mockResolvedValue({ announcement_banner: '', maintenance_mode: false });
     vi.spyOn(apiClient, 'getAdminAuditLogs').mockResolvedValue([]);
+    vi.spyOn(apiClient, 'listAdminPlans').mockResolvedValue([]);
 
     rerender(<AdminScreen onToast={onToast} />);
     await waitFor(() => {
       expect(screen.getByText(/Platform Telemetry/i)).toBeTruthy();
       expect(screen.getByText('45')).toBeTruthy();
     });
+
+    // Backend 403 from /admin/me must block even if frontend role claims admin
+    vi.spyOn(apiClient, 'verifyAdminSession').mockRejectedValueOnce(new ApiError('Forbidden', 403));
+    rerender(<AdminScreen key="denied-check" onToast={onToast} />);
+    await waitFor(() => {
+      expect(screen.getByText(/403 Forbidden/i)).toBeTruthy();
+    });
+  });
+
+  it('renders WorkspacesScreen with invitations, shared docs, and member role permissions', async () => {
+    const onToast = vi.fn();
+    vi.spyOn(apiClient, 'listWorkspaces').mockResolvedValue([
+      {
+        id: 'ws-1',
+        org_id: 'org-1',
+        owner_id: 'user-1',
+        name: 'Legal Review',
+        description: 'Contract reviews',
+        my_role: 'viewer',
+        member_count: 2,
+        unread_message_count: 0,
+        created_at: new Date().toISOString(),
+      },
+    ]);
+    vi.spyOn(apiClient, 'listMyInvitations').mockResolvedValue([]);
+    vi.spyOn(apiClient, 'listDocuments').mockResolvedValue([]);
+    vi.spyOn(apiClient, 'listWorkspaceMembers').mockResolvedValue([
+      {
+        id: 'm-1',
+        user_id: 'user-1',
+        email: 'tester@omnidoc.local',
+        full_name: 'Test User',
+        role: 'viewer',
+        joined_at: new Date().toISOString(),
+      },
+    ]);
+    vi.spyOn(apiClient, 'listWorkspaceDocuments').mockResolvedValue([
+      {
+        id: 'sd-1',
+        workspace_id: 'ws-1',
+        document_id: 'doc-1',
+        filename: 'MSA_Draft.pdf',
+        file_format: 'pdf',
+        file_size: 2048,
+        permission: 'view',
+        created_at: new Date().toISOString(),
+      },
+    ]);
+    vi.spyOn(apiClient, 'listWorkspaceMessages').mockResolvedValue([]);
+    vi.spyOn(apiClient, 'markWorkspaceMessagesRead').mockResolvedValue({ status: 'ok' });
+
+    render(<WorkspacesScreen onToast={onToast} />);
+    await waitFor(() => {
+      expect(screen.getByText('Legal Review (viewer)')).toBeTruthy();
+      expect(screen.getByText('MSA_Draft.pdf')).toBeTruthy();
+    });
+    // Viewer role must not render Share or Unshare buttons
+    expect(screen.queryByRole('button', { name: 'Share' })).toBeNull();
+    expect(screen.queryByRole('button', { name: /Unshare/i })).toBeNull();
   });
 });

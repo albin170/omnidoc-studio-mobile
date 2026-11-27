@@ -43,9 +43,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const wipeLocalSession = useCallback(async (notice?: string) => {
     apiClient.setToken(null);
-    await offlineStore.clearUserCaches();
-    offlineStore.setActiveUser(null);
     await secureStorage.clearAll();
+    await offlineStore.clearUserCaches();
     setUser(null);
     setEntitlements(null);
     setUiConfig(null);
@@ -60,7 +59,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         apiClient.getUiConfig().catch(() => null),
       ]);
       const token = apiClient.getToken();
-      offlineStore.setActiveUser(me.id);
       const updatedMeta: AuthSessionMeta = {
         userId: me.id,
         orgId: me.org_id,
@@ -105,7 +103,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     let mounted = true;
     apiClient.setSessionExpiredHandler((reason) => {
       if (!mounted) return;
-      wipeLocalSession(reason).catch(() => {});
+      wipeLocalSession(reason).catch(() => { });
     });
 
     (async () => {
@@ -117,11 +115,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const storedMeta = await secureStorage.getSessionMeta();
 
       if (storedToken && storedMeta && !isJwtExpired(storedToken)) {
-        offlineStore.setActiveUser(storedMeta.userId);
         apiClient.setToken(storedToken);
         if (mounted) setUser(storedMeta);
         if (connected) {
-          await hydrateUserState(storedMeta).catch(() => {});
+          await hydrateUserState(storedMeta).catch(() => { });
         } else {
           const cachedEnt = await offlineStore.getCachedEntitlements();
           if (mounted && cachedEnt) setEntitlements(cachedEnt);
@@ -147,7 +144,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         }
         const connected = await getNetworkConnected();
         if (connected) {
-          await hydrateUserState(await secureStorage.getSessionMeta()).catch(() => {});
+          await hydrateUserState(await secureStorage.getSessionMeta()).catch(() => { });
         }
       },
       onAppUrlOpen: async (deepLink) => {
@@ -246,7 +243,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       if (!prev) return prev;
       const next = { ...prev, ...patch };
       secureStorage.getToken().then((t) => {
-        if (t) secureStorage.saveSession(t, next).catch(() => {});
+        if (t) secureStorage.saveSession(t, next).catch(() => { });
       });
       return next;
     });

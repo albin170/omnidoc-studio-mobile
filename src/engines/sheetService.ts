@@ -48,9 +48,9 @@ export async function parseSpreadsheetFile(file: File): Promise<ParsedSpreadshee
   }
 
   const arrayBuffer = await file.arrayBuffer();
-  
+
   // Parse with options preserving formulas, number formats, and styles
-  const workbook = XLSX.read(arrayBuffer, { 
+  const workbook = XLSX.read(arrayBuffer, {
     type: 'array',
     cellFormula: true,
     cellNF: true,
@@ -123,7 +123,7 @@ export async function parseSpreadsheetFile(file: File): Promise<ParsedSpreadshee
           if (decoded.r < minRows && decoded.c < maxCols && normalizedData[decoded.r]) {
             normalizedData[decoded.r][decoded.c] = formulaStr;
           }
-        } catch {}
+        } catch { }
       }
       if (cell.z) {
         sheetFormats[cellAddress] = cell.z;
@@ -218,7 +218,7 @@ export function exportMultiSheetWorkbookToBlob(
     // Excel sheet name limit is 31 characters
     XLSX.utils.book_append_sheet(wb, ws, name.slice(0, 31));
   }
-  
+
   const wbout = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
   return new Blob([wbout], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
 }

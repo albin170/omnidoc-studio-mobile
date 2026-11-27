@@ -12,6 +12,11 @@ import {
   UserEntitlements,
   UserUiConfig,
   UserUsageMetrics,
+  WorkspaceChatMessageItem,
+  WorkspaceInvitationItem,
+  WorkspaceMemberItem,
+  WorkspaceSharedDocumentItem,
+  WorkspaceSummary,
 } from '../types';
 
 export class ApiError extends Error {
@@ -80,13 +85,13 @@ function extractApiErrorMessage(body: unknown, status: number, fallback: string)
           if (!msg) return '';
           const locParts = Array.isArray(item.loc)
             ? item.loc
-                .filter((part, idx) => {
-                  const text = String(part ?? '').trim();
-                  if (!text) return false;
-                  if (idx === 0 && (text === 'body' || text === 'query' || text === 'path')) return false;
-                  return true;
-                })
-                .map((part) => String(part).trim())
+              .filter((part, idx) => {
+                const text = String(part ?? '').trim();
+                if (!text) return false;
+                if (idx === 0 && (text === 'body' || text === 'query' || text === 'path')) return false;
+                return true;
+              })
+              .map((part) => String(part).trim())
             : [];
           return locParts.length > 0 ? `${locParts.join('.')}: ${msg}` : msg;
         })
@@ -811,7 +816,7 @@ export class OmniDocMobileApiClient {
             cleanup();
             if (xhr.status === 401) {
               this.token = null;
-              secureStorage.clearAll().catch(() => {});
+              secureStorage.clearAll().catch(() => { });
               this.onSessionExpired?.('Session expired during upload. Please sign in again.');
               reject(new ApiError('Unauthorized', 401));
               return;
@@ -963,7 +968,7 @@ export class OmniDocMobileApiClient {
         try {
           while (true) {
             if (signal?.aborted || controller.signal.aborted) {
-              await reader.cancel().catch(() => {});
+              await reader.cancel().catch(() => { });
               throw new ApiError(
                 signal?.aborted ? 'Document download cancelled.' : 'Document download timed out.',
                 0
@@ -1409,6 +1414,267 @@ export class OmniDocMobileApiClient {
   public async getAdminAuditLogs(limit = 30, signal?: AbortSignal): Promise<any[]> {
     const res = await this.requestJson(`/admin/audit-logs?limit=${limit}`, {}, { signal });
     return assertArray(res, 'adminAuditLogs');
+  }
+
+  public async verifyAdminSession(signal?: AbortSignal): Promise<any> {
+    const res = await this.requestJson('/admin/me', {}, { retries: 0, signal });
+    return assertRecord(res, 'verifyAdminSession');
+  }
+
+  public async listAdminPlans(signal?: AbortSignal): Promise<any[]> {
+    const res = await this.requestJson('/admin/plans', {}, { signal });
+    return assertArray(res, 'listAdminPlans');
+  }
+
+  public async updateOrgSubscription(orgId: string, planTier: string, signal?: AbortSignal): Promise<any> {
+    return this.runDedupedMutation(`PATCH:/admin/organizations/${orgId}/subscription:${planTier}`, async () => {
+      return this.requestJson(
+        `/admin/organizations/${encodeURIComponent(orgId)}/subscription`,
+        {
+          method: 'PATCH',
+          body: JSON.stringify({ plan_tier: planTier }),
+        },
+        { signal }
+      );
+    });
+  }
+
+  public async getAdminUserEntitlements(userId: string, signal?: AbortSignal): Promise<UserEntitlements> {
+    const res = await this.requestJson(`/admin/users/${encodeURIComponent(userId)}/entitlements`, {}, { signal });
+    return assertRecord(res, 'adminUserEntitlements') as unknown as UserEntitlements;
+  }
+
+  public async updateAdminUserEntitlements(
+    userId: string,
+    payload: {
+      feature_overrides: Array<{ feature_key: string; is_enabled: boolean }>;
+      custom_storage_quota_bytes?: number;
+      admin_notes?: string;
+    },
+    signal?: AbortSignal
+  ): Promise<any> {
+    const key = `PUT:/admin/users/${userId}/entitlements:${computePayloadDigest(payload)}`;
+    return this.runDedupedMutation(key, async () => {
+      return this.requestJson(
+        `/admin/users/${encodeURIComponent(userId)}/entitlements`,
+        {
+          method: 'PUT',
+          body: JSON.stringify(payload),
+        },
+        { signal }
+      );
+    });
+  }
+
+  // --- Workspaces & Collaboration ---
+
+  public async listWorkspaces(signal?: AbortSignal): Promise<WorkspaceSummary[]> {
+    const res = await this.requestJson('/workspaces', {}, { signal });
+    return assertArray(res, 'listWorkspaces') as unknown as WorkspaceSummary[];
+  }
+
+  public async createWorkspace(name: string, description = '', signal?: AbortSignal): Promise<WorkspaceSummary> {
+    const cleanName = name.trim();
+    const key = `POST:/workspaces:${cleanName}`;
+    return this.runDedupedMutation(key, async () => {
+      const res = await this.requestJson(
+        '/workspaces',
+        {
+          method: 'POST',
+          body: JSON.stringify({ name: cleanName, description }),
+        },
+        { signal }
+      );
+      return assertRecord(res, 'createWorkspace') as unknown as WorkspaceSummary;
+    });
+  }
+
+  public async listWorkspaceMembers(workspaceId: string, signal?: AbortSignal): Promise<WorkspaceMemberItem[]> {
+    const res = await this.requestJson(`/workspaces/${encodeURIComponent(workspaceId)}/members`, {}, { signal });
+    return assertArray(res, 'listWorkspaceMembers') as unknown as WorkspaceMemberItem[];
+  }
+
+  public async updateWorkspaceMemberRole(
+    workspaceId: string,
+    memberUserId: string,
+    role: 'admin' | 'editor' | 'commenter' | 'viewer',
+    signal?: AbortSignal
+  ): Promise<WorkspaceMemberItem> {
+    return this.runDedupedMutation(`PATCH:/workspaces/${workspaceId}/members/${memberUserId}:${role}`, async () => {
+      const res = await this.requestJson(
+        `/workspaces/${encodeURIComponent(workspaceId)}/members/${encodeURIComponent(memberUserId)}`,
+        {
+          method: 'PATCH',
+          body: JSON.stringify({ role }),
+        },
+        { signal }
+      );
+      return assertRecord(res, 'updateWorkspaceMemberRole') as unknown as WorkspaceMemberItem;
+    });
+  }
+
+  public async removeWorkspaceMember(
+    workspaceId: string,
+    memberUserId: string,
+    signal?: AbortSignal
+  ): Promise<any> {
+    return this.runDedupedMutation(`DELETE:/workspaces/${workspaceId}/members/${memberUserId}`, async () => {
+      return this.requestJson(
+        `/workspaces/${encodeURIComponent(workspaceId)}/members/${encodeURIComponent(memberUserId)}`,
+        { method: 'DELETE' },
+        { signal }
+      );
+    });
+  }
+
+  public async listMyInvitations(signal?: AbortSignal): Promise<WorkspaceInvitationItem[]> {
+    const res = await this.requestJson('/workspaces/invitations/mine', {}, { signal });
+    return assertArray(res, 'listMyInvitations') as unknown as WorkspaceInvitationItem[];
+  }
+
+  public async inviteWorkspaceMember(
+    workspaceId: string,
+    email: string,
+    role: 'admin' | 'editor' | 'commenter' | 'viewer' = 'editor',
+    expiresInDays = 7,
+    signal?: AbortSignal
+  ): Promise<WorkspaceInvitationItem> {
+    const cleanEmail = email.trim().toLowerCase();
+    return this.runDedupedMutation(`POST:/workspaces/${workspaceId}/invitations:${cleanEmail}:${role}`, async () => {
+      const res = await this.requestJson(
+        `/workspaces/${encodeURIComponent(workspaceId)}/invitations`,
+        {
+          method: 'POST',
+          body: JSON.stringify({ email: cleanEmail, role, expires_in_days: expiresInDays }),
+        },
+        { signal }
+      );
+      return assertRecord(res, 'inviteWorkspaceMember') as unknown as WorkspaceInvitationItem;
+    });
+  }
+
+  public async acceptWorkspaceInvitation(invitationId: string, signal?: AbortSignal): Promise<any> {
+    return this.runDedupedMutation(`POST:/workspaces/invitations/${invitationId}/accept`, async () => {
+      return this.requestJson(
+        `/workspaces/invitations/${encodeURIComponent(invitationId)}/accept`,
+        { method: 'POST' },
+        { signal }
+      );
+    });
+  }
+
+  public async rejectWorkspaceInvitation(invitationId: string, signal?: AbortSignal): Promise<any> {
+    return this.runDedupedMutation(`POST:/workspaces/invitations/${invitationId}/reject`, async () => {
+      return this.requestJson(
+        `/workspaces/invitations/${encodeURIComponent(invitationId)}/reject`,
+        { method: 'POST' },
+        { signal }
+      );
+    });
+  }
+
+  public async listWorkspaceDocuments(
+    workspaceId: string,
+    signal?: AbortSignal
+  ): Promise<WorkspaceSharedDocumentItem[]> {
+    const res = await this.requestJson(`/workspaces/${encodeURIComponent(workspaceId)}/documents`, {}, { signal });
+    return assertArray(res, 'listWorkspaceDocuments') as unknown as WorkspaceSharedDocumentItem[];
+  }
+
+  public async shareDocumentToWorkspace(
+    workspaceId: string,
+    documentId: string,
+    permission: 'view' | 'comment' | 'edit' = 'edit',
+    signal?: AbortSignal
+  ): Promise<WorkspaceSharedDocumentItem> {
+    return this.runDedupedMutation(
+      `POST:/workspaces/${workspaceId}/documents:${documentId}:${permission}`,
+      async () => {
+        const res = await this.requestJson(
+          `/workspaces/${encodeURIComponent(workspaceId)}/documents`,
+          {
+            method: 'POST',
+            body: JSON.stringify({ document_id: documentId, permission }),
+          },
+          { signal }
+        );
+        return assertRecord(res, 'shareDocumentToWorkspace') as unknown as WorkspaceSharedDocumentItem;
+      }
+    );
+  }
+
+  public async unshareWorkspaceDocument(
+    workspaceId: string,
+    documentId: string,
+    signal?: AbortSignal
+  ): Promise<any> {
+    return this.runDedupedMutation(`DELETE:/workspaces/${workspaceId}/documents/${documentId}`, async () => {
+      return this.requestJson(
+        `/workspaces/${encodeURIComponent(workspaceId)}/documents/${encodeURIComponent(documentId)}`,
+        { method: 'DELETE' },
+        { signal }
+      );
+    });
+  }
+
+  public async downloadWorkspaceDocument(
+    workspaceId: string,
+    documentId: string,
+    signal?: AbortSignal
+  ): Promise<Blob> {
+    const token = this.token || (await secureStorage.getToken());
+    const headers: Record<string, string> = {};
+    if (token) headers['Authorization'] = `Bearer ${token}`;
+
+    const res = await fetch(
+      `${this.getBaseUrl()}/workspaces/${encodeURIComponent(workspaceId)}/documents/${encodeURIComponent(documentId)}/download`,
+      { headers, signal }
+    );
+    if (res.status === 401) {
+      this.token = null;
+      await secureStorage.clearAll();
+      this.onSessionExpired?.('Session expired. Please sign in again.');
+      throw new ApiError('Unauthorized', 401);
+    }
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ detail: res.statusText }));
+      throw new ApiError(extractApiErrorMessage(err, res.status, 'Workspace download failed'), res.status, err);
+    }
+    return await res.blob();
+  }
+
+  public async listWorkspaceMessages(
+    workspaceId: string,
+    signal?: AbortSignal
+  ): Promise<WorkspaceChatMessageItem[]> {
+    const res = await this.requestJson(`/workspaces/${encodeURIComponent(workspaceId)}/messages`, {}, { signal });
+    return assertArray(res, 'listWorkspaceMessages') as unknown as WorkspaceChatMessageItem[];
+  }
+
+  public async postWorkspaceMessage(
+    workspaceId: string,
+    body: string,
+    signal?: AbortSignal
+  ): Promise<WorkspaceChatMessageItem> {
+    const cleanBody = body.trim();
+    return this.runDedupedMutation(
+      `POST:/workspaces/${workspaceId}/messages:${computePayloadDigest(cleanBody)}`,
+      async () => {
+        const res = await this.requestJson(
+          `/workspaces/${encodeURIComponent(workspaceId)}/messages`,
+          {
+            method: 'POST',
+            body: JSON.stringify({ body: cleanBody }),
+          },
+          { signal }
+        );
+        return assertRecord(res, 'postWorkspaceMessage') as unknown as WorkspaceChatMessageItem;
+      }
+    );
+  }
+
+  public async markWorkspaceMessagesRead(workspaceId: string, signal?: AbortSignal): Promise<any> {
+    return this.requestJson(`/workspaces/${encodeURIComponent(workspaceId)}/messages/read`, { method: 'POST' }, { signal });
   }
 }
 

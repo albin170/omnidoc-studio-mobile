@@ -79,6 +79,24 @@ export const StudiosHubScreen: React.FC<StudiosHubScreenProps> = ({ onNavigateTa
       accent: 'border-violet-500/30 bg-violet-500/10',
       onOpen: () => onOpenSubView('ai_assistant'),
     },
+    {
+      key: 'ocr_studio',
+      title: 'OCR & Image Studio',
+      subtitle: 'Multi-page camera scan, PDF/Cloud OCR text extraction, image compression & PDF-to-PNG.',
+      badge: 'Scan + OCR',
+      icon: <Sparkles className="w-6 h-6 text-cyan-400" />,
+      accent: 'border-cyan-500/30 bg-cyan-500/10',
+      onOpen: () => onOpenSubView('ocr_studio'),
+    },
+    {
+      key: 'workspaces',
+      title: 'Team Workspaces',
+      subtitle: 'Shared team documents, member roles, invitations, and live collaboration updates.',
+      badge: 'Collab',
+      icon: <Repeat className="w-6 h-6 text-indigo-400" />,
+      accent: 'border-indigo-500/30 bg-indigo-500/10',
+      onOpen: () => onOpenSubView('workspaces'),
+    },
   ];
 
   return (

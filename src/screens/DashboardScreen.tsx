@@ -343,7 +343,7 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
         </div>
       </div>
 
-      {/* AI Assistant + Upload Strip */}
+      {/* AI Assistant + OCR + Workspaces Strip */}
       <div className="grid grid-cols-1 gap-2.5">
         <button
           type="button"
@@ -360,6 +360,36 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
             </div>
           </div>
         </button>
+
+        <div className="grid grid-cols-2 gap-2.5">
+          <button
+            type="button"
+            onClick={() => onOpenSubView('ocr_studio')}
+            className="p-3.5 rounded-2xl bg-slate-900 border border-slate-800 flex items-center gap-3 text-left active:bg-slate-800"
+          >
+            <div className="w-10 h-10 rounded-xl bg-cyan-500/15 border border-cyan-500/25 flex items-center justify-center text-cyan-300 shrink-0">
+              <Camera className="w-5 h-5" />
+            </div>
+            <div className="min-w-0">
+              <p className="text-sm font-semibold text-slate-100">OCR &amp; Image</p>
+              <p className="text-[11px] text-slate-400 truncate">Multi-scan &amp; extract</p>
+            </div>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => onOpenSubView('workspaces')}
+            className="p-3.5 rounded-2xl bg-slate-900 border border-slate-800 flex items-center gap-3 text-left active:bg-slate-800"
+          >
+            <div className="w-10 h-10 rounded-xl bg-indigo-500/15 border border-indigo-500/25 flex items-center justify-center text-indigo-300 shrink-0">
+              <Layers className="w-5 h-5" />
+            </div>
+            <div className="min-w-0">
+              <p className="text-sm font-semibold text-slate-100">Workspaces</p>
+              <p className="text-[11px] text-slate-400 truncate">Team docs &amp; invites</p>
+            </div>
+          </button>
+        </div>
       </div>
 
       {/* Recent Documents */}

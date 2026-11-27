@@ -22,6 +22,8 @@ export type MobileSubView =
   | 'word_studio'
   | 'slides_studio'
   | 'sheets_studio'
+  | 'ocr_studio'
+  | 'workspaces'
   | 'studios_hub'
   | 'history'
   | 'notifications'
@@ -218,7 +220,16 @@ export interface NotificationPreferences {
 
 export interface LocalProcessingHistoryItem {
   id: string;
-  kind: 'conversion' | 'pdf_operation' | 'sheet_export' | 'docx_export' | 'slides_export' | 'camera_scan' | 'upload';
+  kind:
+    | 'conversion'
+    | 'pdf_operation'
+    | 'sheet_export'
+    | 'docx_export'
+    | 'slides_export'
+    | 'camera_scan'
+    | 'ocr_extract'
+    | 'image_operation'
+    | 'upload';
   title: string;
   sourceFormat: string;
   targetFormat: string;
@@ -365,4 +376,62 @@ export interface ImageLayer {
   rotation?: number;
   opacity?: number;
   stickerType?: string;
+}
+
+export interface WorkspaceSummary {
+  id: string;
+  org_id: string;
+  owner_id: string;
+  name: string;
+  description: string;
+  my_role: 'owner' | 'admin' | 'editor' | 'commenter' | 'viewer' | string;
+  member_count: number;
+  unread_message_count: number;
+  created_at: string;
+}
+
+export interface WorkspaceMemberItem {
+  id: string;
+  user_id: string;
+  email: string;
+  full_name: string;
+  role: 'owner' | 'admin' | 'editor' | 'commenter' | 'viewer' | string;
+  joined_at: string;
+}
+
+export interface WorkspaceInvitationItem {
+  id: string;
+  workspace_id: string;
+  workspace_name?: string | null;
+  email: string;
+  role: string;
+  status: string;
+  delivery_status: string;
+  invited_by_user_id?: string | null;
+  expires_at: string;
+  created_at: string;
+}
+
+export interface WorkspaceSharedDocumentItem {
+  id: string;
+  workspace_id: string;
+  document_id: string;
+  filename: string;
+  file_format: string;
+  file_size: number;
+  permission: 'view' | 'comment' | 'edit' | string;
+  shared_by_user_id?: string | null;
+  created_at: string;
+}
+
+export interface WorkspaceChatMessageItem {
+  id: string;
+  workspace_id: string;
+  sender_user_id: string;
+  sender_name: string;
+  body: string;
+  mentions: string[];
+  attachment_id?: string | null;
+  attachment_name?: string | null;
+  created_at: string;
 }
