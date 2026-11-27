@@ -2,7 +2,7 @@ import { Capacitor, registerPlugin } from '@capacitor/core';
 import { AuthSessionMeta } from '../types';
 
 export interface SecureVaultSecurityInfo {
-  storageBackend: 'android_keystore' | 'web_session';
+  storageBackend: 'android_keystore' | 'ios_keychain' | 'web_session';
   hardwareBacked: boolean;
   securityLevel: string;
 }
@@ -23,16 +23,24 @@ const SESSION_META_KEY = 'omnidoc_session_meta';
 // Web/test fallback store kept in memory + sessionStorage (never plaintext localStorage for JWTs)
 const memoryFallback = new Map<string, string>();
 
-function isNativeAndroid(): boolean {
+function getNativePlatformName(): 'android' | 'ios' | 'web' {
   try {
-    return Capacitor.isNativePlatform() && Capacitor.getPlatform() === 'android';
+    if (!Capacitor.isNativePlatform()) return 'web';
+    const platform = Capacitor.getPlatform();
+    if (platform === 'android' || platform === 'ios') return platform;
+    return 'web';
   } catch {
-    return false;
+    return 'web';
   }
 }
 
+function isNativeVaultPlatform(): boolean {
+  const platform = getNativePlatformName();
+  return platform === 'android' || platform === 'ios';
+}
+
 async function vaultSet(key: string, value: string): Promise<void> {
-  if (isNativeAndroid()) {
+  if (isNativeVaultPlatform()) {
     await SecureVault.set({ key, value });
     return;
   }
@@ -47,7 +55,7 @@ async function vaultSet(key: string, value: string): Promise<void> {
 }
 
 async function vaultGet(key: string): Promise<string | null> {
-  if (isNativeAndroid()) {
+  if (isNativeVaultPlatform()) {
     const res = await SecureVault.get({ key });
     return res?.value ?? null;
   }
@@ -65,7 +73,7 @@ async function vaultGet(key: string): Promise<string | null> {
 }
 
 async function vaultRemove(key: string): Promise<void> {
-  if (isNativeAndroid()) {
+  if (isNativeVaultPlatform()) {
     await SecureVault.remove({ key });
     return;
   }
@@ -80,7 +88,7 @@ async function vaultRemove(key: string): Promise<void> {
 }
 
 async function vaultClear(): Promise<void> {
-  if (isNativeAndroid()) {
+  if (isNativeVaultPlatform()) {
     await SecureVault.clear();
     return;
   }
@@ -159,11 +167,16 @@ export function isJwtExpired(token: string, skewSeconds = 30): boolean {
 
 export const secureStorage = {
   async getVaultSecurityInfo(): Promise<SecureVaultSecurityInfo> {
-    if (isNativeAndroid() && typeof SecureVault.getSecurityInfo === 'function') {
+    const nativePlatform = getNativePlatformName();
+    if ((nativePlatform === 'android' || nativePlatform === 'ios') && typeof SecureVault.getSecurityInfo === 'function') {
       try {
         return await SecureVault.getSecurityInfo();
       } catch {
-        return { storageBackend: 'android_keystore', hardwareBacked: false, securityLevel: 'unavailable' };
+        return {
+          storageBackend: nativePlatform === 'ios' ? 'ios_keychain' : 'android_keystore',
+          hardwareBacked: false,
+          securityLevel: 'unavailable',
+        };
       }
     }
     return { storageBackend: 'web_session', hardwareBacked: false, securityLevel: 'session_storage' };

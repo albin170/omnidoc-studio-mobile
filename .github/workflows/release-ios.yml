@@ -1,0 +1,115 @@
+name: iOS Capacitor Build & Conditional Signed IPA Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+jobs:
+  ios-build-and-conditional-release:
+    name: iOS Simulator Check & Conditional Signed Archive
+    runs-on: macos-14
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install npm dependencies & run quality gates
+        run: |
+          npm ci
+          npm run typecheck
+          npm run lint
+          npm test
+          npm audit --omit=dev
+          npm run build
+          npx cap sync ios
+
+      - name: Verify iOS Simulator compilation (unsigned check)
+        run: |
+          if [ -f ios/App/Podfile ]; then
+            (cd ios/App && pod install)
+          fi
+          SCHEME_FLAG="-project ios/App/App.xcodeproj"
+          if [ -d ios/App/App.xcworkspace ]; then
+            SCHEME_FLAG="-workspace ios/App/App.xcworkspace"
+          fi
+          xcodebuild $SCHEME_FLAG \
+            -scheme App \
+            -sdk iphonesimulator \
+            -configuration Debug \
+            CODE_SIGNING_ALLOWED=NO \
+            build
+
+      - name: Build & sign iOS archive/IPA when Apple credentials are configured
+        if: ${{ secrets.APPLE_CERTIFICATE_P12_BASE64 != '' && secrets.APPLE_PROVISIONING_PROFILE_BASE64 != '' && secrets.APPLE_TEAM_ID != '' }}
+        env:
+          CERT_B64: ${{ secrets.APPLE_CERTIFICATE_P12_BASE64 }}
+          CERT_PW: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          PROFILE_B64: ${{ secrets.APPLE_PROVISIONING_PROFILE_BASE64 }}
+          TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          EXPORT_METHOD: ${{ secrets.APPLE_EXPORT_METHOD || 'app-store-connect' }}
+        run: |
+          KEYCHAIN_PATH="${RUNNER_TEMP}/app-signing.keychain-db"
+          KEYCHAIN_PW="$(openssl rand -hex 16)"
+          security create-keychain -p "$KEYCHAIN_PW" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PW" "$KEYCHAIN_PATH"
+
+          echo "$CERT_B64" | base64 --decode > "${RUNNER_TEMP}/cert.p12"
+          security import "${RUNNER_TEMP}/cert.p12" -P "$CERT_PW" -A -t cert -f pkcs12 -k "$KEYCHAIN_PATH"
+          security list-keychain -d user -s "$KEYCHAIN_PATH"
+
+          mkdir -p "$HOME/Library/MobileDevice/Provisioning Profiles"
+          PROFILE_PATH="$HOME/Library/MobileDevice/Provisioning Profiles/omnidoc.mobileprovision"
+          echo "$PROFILE_B64" | base64 --decode > "$PROFILE_PATH"
+
+          SCHEME_FLAG="-project ios/App/App.xcodeproj"
+          if [ -d ios/App/App.xcworkspace ]; then
+            SCHEME_FLAG="-workspace ios/App/App.xcworkspace"
+          fi
+
+          xcodebuild $SCHEME_FLAG \
+            -scheme App \
+            -configuration Release \
+            -archivePath "${RUNNER_TEMP}/OmniDocStudio.xcarchive" \
+            DEVELOPMENT_TEAM="$TEAM_ID" \
+            archive
+
+          cat > "${RUNNER_TEMP}/ExportOptions.plist" <<EOF
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>method</key>
+            <string>${EXPORT_METHOD}</string>
+            <key>teamID</key>
+            <string>${TEAM_ID}</string>
+            <key>signingStyle</key>
+            <string>automatic</string>
+          </dict>
+          </plist>
+          EOF
+
+          xcodebuild -exportArchive \
+            -archivePath "${RUNNER_TEMP}/OmniDocStudio.xcarchive" \
+            -exportPath "${RUNNER_TEMP}/ipa-out" \
+            -exportOptionsPlist "${RUNNER_TEMP}/ExportOptions.plist"
+
+          ls -lh "${RUNNER_TEMP}/ipa-out"
+
+      - name: Document missing Apple Developer signing credentials
+        if: ${{ secrets.APPLE_CERTIFICATE_P12_BASE64 == '' || secrets.APPLE_PROVISIONING_PROFILE_BASE64 == '' || secrets.APPLE_TEAM_ID == '' }}
+        run: |
+          echo "iOS simulator build passed. Signed IPA archive skipped because Apple Developer signing secrets (APPLE_CERTIFICATE_P12_BASE64, APPLE_PROVISIONING_PROFILE_BASE64, APPLE_TEAM_ID) are not configured." >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Cleanup temporary Apple signing artifacts
+        if: always()
+        run: |
+          rm -f "${RUNNER_TEMP}/cert.p12" "${RUNNER_TEMP}/ExportOptions.plist"
+          rm -rf "${RUNNER_TEMP}/app-signing.keychain-db" "${RUNNER_TEMP}/OmniDocStudio.xcarchive"

@@ -201,4 +201,10 @@ describe('Auth, Security & Session Management', () => {
     expect(second.version).toBe(2);
     await expect(apiClient.renameProject('proj-1', '   ')).rejects.toBeInstanceOf(ApiError);
   });
+
+  it('reports web_session vault backend safely when outside native Android/iOS runtimes', async () => {
+    const info = await secureStorage.getVaultSecurityInfo();
+    expect(info.storageBackend).toBe('web_session');
+    expect(info.hardwareBacked).toBe(false);
+  });
 });
