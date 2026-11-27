@@ -24,11 +24,32 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
 
+            <intent-filter android:autoVerify="true">
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data
+                    android:scheme="https"
+                    android:host="omnidoc-studio-jet.vercel.app"
+                    android:pathPrefix="/mobile" />
+            </intent-filter>
+
             <intent-filter android:autoVerify="false">
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
-                <data android:scheme="omnidoc" />
+                <data android:scheme="omnidoc" android:host="auth" android:pathPrefix="/callback" />
+                <data android:scheme="omnidoc" android:host="project" />
+                <data android:scheme="omnidoc" android:host="projects" />
+                <data android:scheme="omnidoc" android:host="home" />
+                <data android:scheme="omnidoc" android:host="docs" />
+                <data android:scheme="omnidoc" android:host="pdf" />
+                <data android:scheme="omnidoc" android:host="convert" />
+                <data android:scheme="omnidoc" android:host="word" />
+                <data android:scheme="omnidoc" android:host="slides" />
+                <data android:scheme="omnidoc" android:host="sheets" />
+                <data android:scheme="omnidoc" android:host="ocr" />
+                <data android:scheme="omnidoc" android:host="workspaces" />
             </intent-filter>
 
         </activity>

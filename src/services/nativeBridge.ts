@@ -19,30 +19,112 @@ export interface DeepLinkEvent {
   host: string;
   path: string;
   params: Record<string, string>;
+  redirectUri: string;
+  securityWarning?: string;
 }
 
+const ALLOWED_DEEP_LINK_HOSTS = new Set([
+  'auth',
+  'home',
+  'dashboard',
+  'docs',
+  'library',
+  'documents',
+  'pdf',
+  'pdf_studio',
+  'convert',
+  'conversion_studio',
+  'word',
+  'word_studio',
+  'slides',
+  'slides_studio',
+  'sheets',
+  'sheets_studio',
+  'ocr',
+  'ocr_studio',
+  'studios',
+  'studios_hub',
+  'workspaces',
+  'project',
+  'projects',
+  'history',
+  'notifications',
+  'settings',
+  'admin',
+  'ai',
+  'ai_assistant',
+]);
+
+const SENSITIVE_DEEP_LINK_PARAMS = new Set(['access_token', 'token', 'jwt', 'refresh_token', 'secret']);
+
 /**
- * Parses an `omnidoc://` custom scheme deep link into normalized route + query params.
- * Returns null for unrecognized schemes or malformed URLs.
+ * Parses verified HTTPS App Links (`https://omnidoc-studio-jet.vercel.app/mobile/...`)
+ * and `omnidoc://` deep links against a strict route allowlist.
+ * Rejects any deep link carrying reusable tokens/JWTs in query or hash fragments.
  */
 export function parseDeepLinkUrl(rawUrl: string): DeepLinkEvent | null {
   if (!rawUrl || typeof rawUrl !== 'string') return null;
   try {
-    const parsed = new URL(rawUrl.trim());
+    const trimmed = rawUrl.trim();
+    const parsed = new URL(trimmed);
     const scheme = parsed.protocol.replace(/:$/, '').toLowerCase();
-    if (scheme !== 'omnidoc') return null;
+
+    let host = '';
+    let path = '/';
+    let redirectUri = trimmed.split('?')[0].split('#')[0];
+
+    if (scheme === 'https') {
+      if (parsed.hostname.toLowerCase() !== 'omnidoc-studio-jet.vercel.app') {
+        return null;
+      }
+      if (!parsed.pathname.toLowerCase().startsWith('/mobile')) {
+        return null;
+      }
+      const subPath = parsed.pathname.slice('/mobile'.length).replace(/^\/+/, '');
+      const segments = subPath.split('/').filter(Boolean);
+      host = (segments[0] || 'home').toLowerCase();
+      path = segments.length > 1 ? `/${segments.slice(1).join('/')}` : '/';
+    } else if (scheme === 'omnidoc') {
+      host = parsed.hostname.toLowerCase();
+      path = parsed.pathname || '/';
+    } else {
+      return null;
+    }
+
+    if (!ALLOWED_DEEP_LINK_HOSTS.has(host)) {
+      return null;
+    }
+
+    // Reject reusable tokens embedded in query parameters or fragments
+    const hashParams = new URLSearchParams(parsed.hash.replace(/^#/, ''));
+    for (const sensitiveKey of SENSITIVE_DEEP_LINK_PARAMS) {
+      if (parsed.searchParams.has(sensitiveKey) || hashParams.has(sensitiveKey)) {
+        return {
+          rawUrl: trimmed,
+          scheme,
+          host: 'rejected',
+          path: '/',
+          params: {},
+          redirectUri,
+          securityWarning: 'Rejected insecure deep link containing embedded token parameters.',
+        };
+      }
+    }
 
     const params: Record<string, string> = {};
     parsed.searchParams.forEach((value, key) => {
-      params[key] = value;
+      if (!SENSITIVE_DEEP_LINK_PARAMS.has(key.toLowerCase())) {
+        params[key] = value;
+      }
     });
 
     return {
-      rawUrl: rawUrl.trim(),
+      rawUrl: trimmed,
       scheme,
-      host: parsed.hostname.toLowerCase(),
-      path: parsed.pathname || '/',
+      host,
+      path,
       params,
+      redirectUri,
     };
   } catch {
     return null;

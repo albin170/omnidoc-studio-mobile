@@ -1,4 +1,4 @@
-import * as XLSX from 'xlsx';
+import * as XLSX from '@datalens-tech/xlsx';
 import { PDFDocument, rgb, StandardFonts } from 'pdf-lib';
 
 export interface ParsedSpreadsheet {

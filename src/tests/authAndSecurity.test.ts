@@ -1,18 +1,21 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { envManager, validateApiUrl } from '../config/env';
 import { apiClient, ApiError } from '../services/apiClient';
-import { isJwtExpired, parseJwtPayload, secureStorage } from '../services/secureStorage';
+import { parseDeepLinkUrl } from '../services/nativeBridge';
+import { isJwtExpired, parseJwtPayload, secureStorage, validateJwtStructure } from '../services/secureStorage';
+
+function toBase64Url(obj: Record<string, any>): string {
+  return btoa(JSON.stringify(obj)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
 
 function makeJwt(expOffsetSeconds: number, extra: Record<string, any> = {}): string {
-  const header = btoa(JSON.stringify({ alg: 'HS256', typ: 'JWT' }));
-  const payload = btoa(
-    JSON.stringify({
-      sub: 'user-123',
-      role: 'user',
-      exp: Math.floor(Date.now() / 1000) + expOffsetSeconds,
-      ...extra,
-    })
-  );
+  const header = toBase64Url({ alg: 'HS256', typ: 'JWT' });
+  const payload = toBase64Url({
+    sub: 'user-123',
+    role: 'user',
+    exp: Math.floor(Date.now() / 1000) + expOffsetSeconds,
+    ...extra,
+  });
   return `${header}.${payload}.sig`;
 }
 
@@ -65,13 +68,40 @@ describe('Auth, Security & Session Management', () => {
     expect(await secureStorage.getSessionMeta()).toBeNull();
   });
 
-  it('detects expired JWT tokens and rejects malformed JWT payloads safely', () => {
+  it('detects expired JWT tokens and fails closed on malformed or missing-exp payloads', () => {
     const expired = makeJwt(-120);
     const expiringInsideSkew = makeJwt(15);
     expect(isJwtExpired(expired)).toBe(true);
     expect(isJwtExpired(expiringInsideSkew, 30)).toBe(true);
     expect(isJwtExpired(expiringInsideSkew, 5)).toBe(false);
+
+    // Malformed / missing exp / alg=none / missing sub must fail closed (never treated as valid/unexpired)
+    const missingExp = `${btoa(JSON.stringify({ alg: 'HS256' }))}.${btoa(JSON.stringify({ sub: 'u1' }))}.sig`;
+    const algNone = `${btoa(JSON.stringify({ alg: 'none' }))}.${btoa(JSON.stringify({ sub: 'u1', exp: 9999999999 }))}.sig`;
+    const futureNbf = makeJwt(3600, { nbf: Math.floor(Date.now() / 1000) + 600 });
+
     expect(parseJwtPayload('not-a-jwt')).toBeNull();
+    expect(validateJwtStructure(missingExp)).toBe(false);
+    expect(isJwtExpired('not-a-jwt')).toBe(true);
+    expect(isJwtExpired(missingExp)).toBe(true);
+    expect(isJwtExpired(algNone)).toBe(true);
+    expect(isJwtExpired(futureNbf)).toBe(true);
+  });
+
+  it('validates deep links strictly and blocks embedded access_token parameters', () => {
+    const appLink = parseDeepLinkUrl('https://omnidoc-studio-jet.vercel.app/mobile/auth/callback?code=one_time_code_123');
+    expect(appLink?.host).toBe('auth');
+    expect(appLink?.params.code).toBe('one_time_code_123');
+
+    const unsafeQuery = parseDeepLinkUrl('omnidoc://auth/callback?access_token=jwt.secret.token');
+    expect(unsafeQuery?.host).toBe('rejected');
+    expect(unsafeQuery?.securityWarning).toBeTruthy();
+
+    const unsafeHash = parseDeepLinkUrl('https://omnidoc-studio-jet.vercel.app/mobile/auth/callback#access_token=leak');
+    expect(unsafeHash?.host).toBe('rejected');
+
+    expect(parseDeepLinkUrl('https://evil.example.com/mobile/auth/callback?code=123')).toBeNull();
+    expect(parseDeepLinkUrl('omnidoc://unknown_route/foo')).toBeNull();
   });
 
   it('handles 401 session expiration globally by purging token and invoking handler', async () => {

@@ -2,9 +2,11 @@ package studio.omnidoc.mobile;
 
 import android.content.Context;
 import android.content.SharedPreferences;
+import android.os.Build;
 import android.security.keystore.KeyGenParameterSpec;
+import android.security.keystore.KeyInfo;
+import android.security.keystore.KeyPermanentlyInvalidatedException;
 import android.security.keystore.KeyProperties;
-import android.util.Base64;
 
 import com.getcapacitor.JSObject;
 import com.getcapacitor.Plugin;
@@ -12,33 +14,40 @@ import com.getcapacitor.PluginCall;
 import com.getcapacitor.PluginMethod;
 import com.getcapacitor.annotation.CapacitorPlugin;
 
-import java.nio.ByteBuffer;
-import java.nio.charset.StandardCharsets;
 import java.security.KeyStore;
+import java.security.UnrecoverableKeyException;
 
-import javax.crypto.Cipher;
+import javax.crypto.AEADBadTagException;
 import javax.crypto.KeyGenerator;
 import javax.crypto.SecretKey;
-import javax.crypto.spec.GCMParameterSpec;
+import javax.crypto.SecretKeyFactory;
 
 @CapacitorPlugin(name = "SecureVault")
 public class SecureVaultPlugin extends Plugin {
     private static final String ANDROID_KEYSTORE = "AndroidKeyStore";
     private static final String KEY_ALIAS = "omnidoc_mobile_vault_key_v1";
     private static final String PREFS_NAME = "omnidoc_secure_vault_prefs";
-    private static final String TRANSFORMATION = "AES/GCM/NoPadding";
-    private static final int GCM_IV_LENGTH = 12;
-    private static final int GCM_TAG_LENGTH_BITS = 128;
 
-    private SecretKey getOrCreateSecretKey() throws Exception {
+    private synchronized SecretKey getOrCreateSecretKey(boolean forceRecreate) throws Exception {
         KeyStore keyStore = KeyStore.getInstance(ANDROID_KEYSTORE);
         keyStore.load(null);
+
+        if (forceRecreate && keyStore.containsAlias(KEY_ALIAS)) {
+            keyStore.deleteEntry(KEY_ALIAS);
+        }
+
         if (keyStore.containsAlias(KEY_ALIAS)) {
-            KeyStore.SecretKeyEntry entry = (KeyStore.SecretKeyEntry) keyStore.getEntry(KEY_ALIAS, null);
-            if (entry != null && entry.getSecretKey() != null) {
-                return entry.getSecretKey();
+            try {
+                KeyStore.SecretKeyEntry entry = (KeyStore.SecretKeyEntry) keyStore.getEntry(KEY_ALIAS, null);
+                if (entry != null && entry.getSecretKey() != null) {
+                    return entry.getSecretKey();
+                }
+            } catch (UnrecoverableKeyException e) {
+                keyStore.deleteEntry(KEY_ALIAS);
+                getPrefs().edit().clear().apply();
             }
         }
+
         KeyGenerator keyGenerator = KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, ANDROID_KEYSTORE);
         KeyGenParameterSpec spec = new KeyGenParameterSpec.Builder(
                 KEY_ALIAS,
@@ -46,43 +55,85 @@ public class SecureVaultPlugin extends Plugin {
         )
                 .setBlockModes(KeyProperties.BLOCK_MODE_GCM)
                 .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
-                .setKeySize(256)
+                .setKeySize(SecureVaultCrypto.KEY_SIZE_BITS)
+                .setRandomizedEncryptionRequired(true)
                 .build();
         keyGenerator.init(spec);
         return keyGenerator.generateKey();
     }
 
     private String encrypt(String plaintext) throws Exception {
-        Cipher cipher = Cipher.getInstance(TRANSFORMATION);
-        cipher.init(Cipher.ENCRYPT_MODE, getOrCreateSecretKey());
-        byte[] iv = cipher.getIV();
-        byte[] ciphertext = cipher.doFinal(plaintext.getBytes(StandardCharsets.UTF_8));
-        ByteBuffer buffer = ByteBuffer.allocate(iv.length + ciphertext.length);
-        buffer.put(iv);
-        buffer.put(ciphertext);
-        return Base64.encodeToString(buffer.array(), Base64.NO_WRAP);
+        try {
+            return SecureVaultCrypto.encryptWithKey(plaintext, getOrCreateSecretKey(false));
+        } catch (KeyPermanentlyInvalidatedException e) {
+            getPrefs().edit().clear().apply();
+            return SecureVaultCrypto.encryptWithKey(plaintext, getOrCreateSecretKey(true));
+        }
     }
 
     private String decrypt(String encoded) throws Exception {
-        byte[] raw = Base64.decode(encoded, Base64.NO_WRAP);
-        if (raw.length <= GCM_IV_LENGTH) {
-            throw new IllegalArgumentException("Corrupted encrypted vault entry");
-        }
-        ByteBuffer buffer = ByteBuffer.wrap(raw);
-        byte[] iv = new byte[GCM_IV_LENGTH];
-        buffer.get(iv);
-        byte[] ciphertext = new byte[buffer.remaining()];
-        buffer.get(ciphertext);
-
-        Cipher cipher = Cipher.getInstance(TRANSFORMATION);
-        GCMParameterSpec spec = new GCMParameterSpec(GCM_TAG_LENGTH_BITS, iv);
-        cipher.init(Cipher.DECRYPT_MODE, getOrCreateSecretKey(), spec);
-        byte[] plaintext = cipher.doFinal(ciphertext);
-        return new String(plaintext, StandardCharsets.UTF_8);
+        return SecureVaultCrypto.decryptWithKey(encoded, getOrCreateSecretKey(false));
     }
 
     private SharedPreferences getPrefs() {
         return getContext().getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
+    }
+
+    private JSObject inspectKeySecurityInfo(SecretKey key) {
+        JSObject info = new JSObject();
+        info.put("storageBackend", "android_keystore");
+        info.put("algorithm", SecureVaultCrypto.TRANSFORMATION);
+        info.put("keySizeBits", SecureVaultCrypto.KEY_SIZE_BITS);
+
+        boolean hardwareBacked = false;
+        String securityLevel = "unknown";
+
+        try {
+            SecretKeyFactory factory = SecretKeyFactory.getInstance(key.getAlgorithm(), ANDROID_KEYSTORE);
+            KeyInfo keyInfo = (KeyInfo) factory.getKeySpec(key, KeyInfo.class);
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                int level = keyInfo.getSecurityLevel();
+                if (level == KeyProperties.SECURITY_LEVEL_STRONGBOX) {
+                    hardwareBacked = true;
+                    securityLevel = "strongbox";
+                } else if (level == KeyProperties.SECURITY_LEVEL_TRUSTED_ENVIRONMENT) {
+                    hardwareBacked = true;
+                    securityLevel = "tee";
+                } else if (level == KeyProperties.SECURITY_LEVEL_SOFTWARE) {
+                    hardwareBacked = false;
+                    securityLevel = "software";
+                } else if (level == KeyProperties.SECURITY_LEVEL_UNKNOWN_SECURE) {
+                    hardwareBacked = true;
+                    securityLevel = "hardware_unknown";
+                }
+            } else {
+                @SuppressWarnings("deprecation")
+                boolean insideHw = keyInfo.isInsideSecureHardware();
+                hardwareBacked = insideHw;
+                securityLevel = insideHw ? "tee" : "software";
+            }
+        } catch (Exception e) {
+            hardwareBacked = false;
+            securityLevel = "unavailable";
+        }
+
+        info.put("hardwareBacked", hardwareBacked);
+        info.put("securityLevel", securityLevel);
+        return info;
+    }
+
+    @PluginMethod
+    public void getSecurityInfo(PluginCall call) {
+        try {
+            SecretKey key = getOrCreateSecretKey(false);
+            call.resolve(inspectKeySecurityInfo(key));
+        } catch (Exception e) {
+            JSObject fallback = new JSObject();
+            fallback.put("storageBackend", "android_keystore");
+            fallback.put("hardwareBacked", false);
+            fallback.put("securityLevel", "unavailable");
+            call.resolve(fallback);
+        }
     }
 
     @PluginMethod
@@ -117,6 +168,12 @@ public class SecureVaultPlugin extends Plugin {
             } else {
                 ret.put("value", decrypt(encrypted));
             }
+            call.resolve(ret);
+        } catch (AEADBadTagException | KeyPermanentlyInvalidatedException | IllegalArgumentException e) {
+            // Tampered ciphertext or invalidated hardware key: fail closed & purge corrupted entry
+            getPrefs().edit().remove(key).apply();
+            JSObject ret = new JSObject();
+            ret.put("value", null);
             call.resolve(ret);
         } catch (Exception e) {
             getPrefs().edit().remove(key).apply();

@@ -1,11 +1,18 @@
 import { Capacitor, registerPlugin } from '@capacitor/core';
 import { AuthSessionMeta } from '../types';
 
+export interface SecureVaultSecurityInfo {
+  storageBackend: 'android_keystore' | 'web_session';
+  hardwareBacked: boolean;
+  securityLevel: string;
+}
+
 export interface SecureVaultPlugin {
   set(options: { key: string; value: string }): Promise<void>;
   get(options: { key: string }): Promise<{ value: string | null }>;
   remove(options: { key: string }): Promise<void>;
   clear(): Promise<void>;
+  getSecurityInfo?(): Promise<SecureVaultSecurityInfo>;
 }
 
 const SecureVault = registerPlugin<SecureVaultPlugin>('SecureVault');
@@ -88,30 +95,95 @@ async function vaultClear(): Promise<void> {
   }
 }
 
-export function parseJwtPayload(token: string): Record<string, any> | null {
+const BASE64_URL_PART_RE = /^[A-Za-z0-9_-]+={0,2}$/;
+
+function decodeBase64UrlJson(segment: string): Record<string, any> | null {
+  if (!segment || !BASE64_URL_PART_RE.test(segment)) return null;
   try {
-    const parts = token.split('.');
-    if (parts.length !== 3) return null;
-    const base64 = parts[1].replace(/-/g, '+').replace(/_/g, '/');
+    const base64 = segment.replace(/-/g, '+').replace(/_/g, '/');
     const padded = base64 + '='.repeat((4 - (base64.length % 4)) % 4);
     const decoded = atob(padded);
-    return JSON.parse(decoded);
+    const parsed = JSON.parse(decoded);
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      return null;
+    }
+    return parsed as Record<string, any>;
   } catch {
     return null;
   }
 }
 
+export function validateJwtStructure(token: string): boolean {
+  if (typeof token !== 'string') return false;
+  const trimmed = token.trim();
+  if (!trimmed) return false;
+  const parts = trimmed.split('.');
+  if (parts.length !== 3 || parts.some((p) => !BASE64_URL_PART_RE.test(p))) {
+    return false;
+  }
+
+  const header = decodeBase64UrlJson(parts[0]);
+  if (!header || typeof header.alg !== 'string' || !header.alg.trim() || header.alg.trim().toLowerCase() === 'none') {
+    return false;
+  }
+
+  const payload = decodeBase64UrlJson(parts[1]);
+  if (!payload) return false;
+  if (typeof payload.sub !== 'string' || payload.sub.trim().length === 0) return false;
+  if (typeof payload.exp !== 'number' || !Number.isFinite(payload.exp) || payload.exp <= 0) {
+    return false;
+  }
+  if (payload.nbf !== undefined && (typeof payload.nbf !== 'number' || !Number.isFinite(payload.nbf))) {
+    return false;
+  }
+  return true;
+}
+
+export function parseJwtPayload(token: string): Record<string, any> | null {
+  if (!validateJwtStructure(token)) return null;
+  return decodeBase64UrlJson(token.trim().split('.')[1]);
+}
+
 export function isJwtExpired(token: string, skewSeconds = 30): boolean {
   const payload = parseJwtPayload(token);
-  if (!payload || typeof payload.exp !== 'number') return false;
+  // Fail closed on malformed tokens or missing numeric expiration
+  if (!payload || typeof payload.exp !== 'number' || !Number.isFinite(payload.exp) || payload.exp <= 0) {
+    return true;
+  }
   const nowSec = Math.floor(Date.now() / 1000);
+  if (typeof payload.nbf === 'number' && payload.nbf > nowSec + skewSeconds) {
+    return true;
+  }
   return payload.exp <= nowSec + skewSeconds;
 }
 
 export const secureStorage = {
+  async getVaultSecurityInfo(): Promise<SecureVaultSecurityInfo> {
+    if (isNativeAndroid() && typeof SecureVault.getSecurityInfo === 'function') {
+      try {
+        return await SecureVault.getSecurityInfo();
+      } catch {
+        return { storageBackend: 'android_keystore', hardwareBacked: false, securityLevel: 'unavailable' };
+      }
+    }
+    return { storageBackend: 'web_session', hardwareBacked: false, securityLevel: 'session_storage' };
+  },
+
   async saveSession(token: string, meta: AuthSessionMeta): Promise<void> {
     await vaultSet(TOKEN_KEY, token);
     await vaultSet(SESSION_META_KEY, JSON.stringify(meta));
+  },
+
+  async setAuxiliarySecret(key: string, value: string): Promise<void> {
+    await vaultSet(key, value);
+  },
+
+  async getAuxiliarySecret(key: string): Promise<string | null> {
+    return vaultGet(key);
+  },
+
+  async removeAuxiliarySecret(key: string): Promise<void> {
+    await vaultRemove(key);
   },
 
   async updateToken(token: string): Promise<void> {

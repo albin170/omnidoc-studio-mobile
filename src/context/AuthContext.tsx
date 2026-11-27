@@ -149,13 +149,30 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       },
       onAppUrlOpen: async (deepLink) => {
         if (!mounted) return;
-        if (deepLink.host === 'auth' && deepLink.path.includes('logout')) {
-          await wipeLocalSession('Signed out via deep link.');
+        if (deepLink.securityWarning || deepLink.host === 'rejected') {
+          setSessionNotice(deepLink.securityWarning || 'Blocked unsafe authentication link.');
           return;
         }
-        if (deepLink.host === 'auth' && deepLink.params.access_token && !isJwtExpired(deepLink.params.access_token)) {
-          apiClient.setToken(deepLink.params.access_token);
-          await hydrateUserState(null).catch(() => {});
+        if (deepLink.host === 'auth' && deepLink.path.includes('callback') && deepLink.params.code) {
+          try {
+            const tokenRes = await apiClient.exchangeMobileAuthCode(deepLink.params.code, deepLink.redirectUri);
+            const rawRole = (tokenRes.role || 'user').toLowerCase().trim() as UserRole;
+            const now = Date.now();
+            const meta: AuthSessionMeta = {
+              userId: tokenRes.user_id,
+              orgId: tokenRes.org_id,
+              email: tokenRes.email,
+              fullName: tokenRes.full_name || tokenRes.email.split('@')[0],
+              role: rawRole,
+              planTier: (tokenRes.plan_tier || 'free') as PlanTier,
+              issuedAt: now,
+              expiresAt: now + 24 * 60 * 60 * 1000,
+            };
+            await secureStorage.saveSession(tokenRes.access_token, meta);
+            await hydrateUserState(meta);
+          } catch (err: any) {
+            setSessionNotice(err?.message || 'One-time authorization code exchange failed.');
+          }
           return;
         }
         setPendingDeepLink(deepLink);

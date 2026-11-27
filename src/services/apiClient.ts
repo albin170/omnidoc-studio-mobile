@@ -401,6 +401,47 @@ export class OmniDocMobileApiClient {
     });
   }
 
+  public async createMobileAuthCode(
+    redirectUri = 'omnidoc://auth/callback',
+    signal?: AbortSignal
+  ): Promise<{ code: string; expires_in: number; redirect_uri: string }> {
+    const res = await this.requestJson(
+      '/auth/mobile-code',
+      {
+        method: 'POST',
+        body: JSON.stringify({ redirect_uri: redirectUri }),
+      },
+      { retries: 0, signal }
+    );
+    const obj = assertRecord(res, 'createMobileAuthCode');
+    assertNonEmptyString(obj.code, 'code', 'createMobileAuthCode');
+    return obj as { code: string; expires_in: number; redirect_uri: string };
+  }
+
+  public async exchangeMobileAuthCode(
+    code: string,
+    redirectUri = 'omnidoc://auth/callback',
+    signal?: AbortSignal
+  ): Promise<BackendTokenResponse> {
+    const cleanCode = code.trim();
+    if (!cleanCode) {
+      throw new ApiError('Authorization code is required.', 400);
+    }
+    return this.runDedupedMutation(`POST:/auth/mobile-code/exchange:${cleanCode.slice(0, 12)}`, async () => {
+      const res = await this.requestJson<BackendTokenResponse>(
+        '/auth/mobile-code/exchange',
+        {
+          method: 'POST',
+          body: JSON.stringify({ code: cleanCode, redirect_uri: redirectUri }),
+        },
+        { skipAuth: true, retries: 0, signal }
+      );
+      const validated = validateTokenResponse(res, 'exchangeMobileAuthCode');
+      this.token = validated.access_token;
+      return validated;
+    });
+  }
+
   public async getMe(signal?: AbortSignal): Promise<any> {
     const res = await this.requestJson('/auth/me', {}, { signal });
     const obj = assertRecord(res, 'getMe');

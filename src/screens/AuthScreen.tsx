@@ -18,9 +18,9 @@ export const AuthScreen: React.FC = () => {
   const [fullName, setFullName] = useState('');
   const [orgName, setOrgName] = useState('');
 
-  const [termsAccepted, setTermsAccepted] = useState(true);
-  const [privacyAccepted, setPrivacyAccepted] = useState(true);
-  const [aiConsent, setAiConsent] = useState(true);
+  const [termsAccepted, setTermsAccepted] = useState(false);
+  const [privacyAccepted, setPrivacyAccepted] = useState(false);
+  const [aiConsent, setAiConsent] = useState(false);
   const [marketingConsent, setMarketingConsent] = useState(false);
 
   const [resetToken, setResetToken] = useState('');
@@ -46,8 +46,8 @@ export const AuthScreen: React.FC = () => {
       if (mode === 'login') {
         await login(email, password, adminMode);
       } else if (mode === 'register') {
-        if (!termsAccepted || !privacyAccepted || !aiConsent) {
-          throw new Error('Please accept Terms, Privacy Policy, and AI Processing consent to create an account.');
+        if (!termsAccepted || !privacyAccepted) {
+          throw new Error('Please accept the Terms of Service and Privacy Policy to create an account.');
         }
         await register({
           email,
