@@ -211,4 +211,40 @@ describe('Document Validation, Streaming Downloads, Network Resilience & Offline
     expect(await offlineStore.getLocalHistory()).toHaveLength(0);
     expect(await offlineStore.getLastSyncTimestamp()).toBeNull();
   });
+
+  it('formats FastAPI/Pydantic 422 validation error arrays into readable ApiError messages', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          detail: [
+            {
+              loc: ['body', 'email'],
+              msg: 'value is not a valid email address: reserved domain',
+              type: 'value_error',
+            },
+          ],
+        }),
+        { status: 422 }
+      )
+    );
+
+    let caught: unknown = null;
+    try {
+      await apiClient.register({
+        email: 'bad@omnidoc.local',
+        password: 'Password123!',
+        full_name: 'Bad Email User',
+        terms_accepted: true,
+        privacy_accepted: true,
+        ai_consent: true,
+      });
+    } catch (err) {
+      caught = err;
+    }
+
+    expect(caught).toBeInstanceOf(ApiError);
+    expect((caught as ApiError).status).toBe(422);
+    expect((caught as ApiError).message).toContain('email');
+    expect((caught as ApiError).message).toContain('value is not a valid email address: reserved domain');
+  });
 });

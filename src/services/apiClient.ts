@@ -38,6 +38,57 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
+function extractApiErrorMessage(body: unknown, fallback: string): string {
+  if (!isRecord(body)) {
+    return fallback;
+  }
+
+  if (typeof body.detail === 'string' && body.detail.trim()) {
+    return body.detail.trim();
+  }
+
+  if (Array.isArray(body.detail) && body.detail.length > 0) {
+    const formatted = body.detail
+      .map((item) => {
+        if (!isRecord(item)) return '';
+        const msg =
+          typeof item.msg === 'string' && item.msg.trim()
+            ? item.msg.trim()
+            : typeof item.message === 'string' && item.message.trim()
+              ? item.message.trim()
+              : '';
+        if (!msg) return '';
+        const locParts = Array.isArray(item.loc)
+          ? item.loc
+              .filter((part, idx) => {
+                const text = String(part ?? '').trim();
+                if (!text) return false;
+                if (idx === 0 && (text === 'body' || text === 'query' || text === 'path')) return false;
+                return true;
+              })
+              .map((part) => String(part).trim())
+          : [];
+        return locParts.length > 0 ? `${locParts.join('.')}: ${msg}` : msg;
+      })
+      .filter(Boolean)
+      .join('; ');
+
+    if (formatted) {
+      return formatted;
+    }
+  }
+
+  if (isRecord(body.detail) && typeof body.detail.message === 'string' && body.detail.message.trim()) {
+    return body.detail.message.trim();
+  }
+
+  if (typeof body.message === 'string' && body.message.trim()) {
+    return body.message.trim();
+  }
+
+  return fallback;
+}
+
 function assertRecord(value: unknown, context: string): Record<string, unknown> {
   if (!isRecord(value)) {
     throw new ApiError(`Invalid server response for ${context}: expected object.`, 502);
@@ -210,10 +261,7 @@ export class OmniDocMobileApiClient {
 
         if (!res.ok) {
           const body = await res.json().catch(() => ({ detail: res.statusText }));
-          const message =
-            typeof body?.detail === 'string'
-              ? body.detail
-              : body?.detail?.message || body?.message || `HTTP ${res.status}: ${res.statusText}`;
+          const message = extractApiErrorMessage(body, `HTTP ${res.status}: ${res.statusText}`);
 
           if (RETRYABLE_STATUSES.has(res.status) && attempt < maxRetries) {
             await sleep(300 * Math.pow(2, attempt));
@@ -620,7 +668,13 @@ export class OmniDocMobileApiClient {
                 reject(validationErr);
               }
             } else {
-              reject(new ApiError(parsed?.detail || `Upload failed (${xhr.status})`, xhr.status, parsed));
+              reject(
+                new ApiError(
+                  extractApiErrorMessage(parsed, `Upload failed (${xhr.status})`),
+                  xhr.status,
+                  parsed
+                )
+              );
             }
           };
           xhr.onabort = () => {
@@ -662,7 +716,7 @@ export class OmniDocMobileApiClient {
         }
         if (!res.ok) {
           const body = await res.json().catch(() => ({ detail: res.statusText }));
-          throw new ApiError(body?.detail || 'Upload failed', res.status, body);
+          throw new ApiError(extractApiErrorMessage(body, 'Upload failed'), res.status, body);
         }
         const json = await res.json().catch(() => null);
         const validated = validateDocumentShape(json, 'uploadDocument');
@@ -722,9 +776,9 @@ export class OmniDocMobileApiClient {
       if (!res.ok) {
         const err = await res.json().catch(() => ({ detail: res.statusText }));
         throw new ApiError(
-          typeof err?.detail === 'string' ? err.detail : err?.detail?.message || 'Document download failed',
+          extractApiErrorMessage(err, 'Document download failed'),
           res.status,
-          err?.detail ?? err
+          (isRecord(err) ? err.detail : undefined) ?? err
         );
       }
 

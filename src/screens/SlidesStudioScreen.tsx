@@ -207,6 +207,24 @@ export const SlidesStudioScreen: React.FC<SlidesStudioScreenProps> = ({
     onToast('info', `Loaded deck "${initialProject.title}" (v${initialProject.version})`);
   }, [initialProject, onToast]);
 
+  useEffect(() => {
+    if (!isPresenting) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        setIsPresenting(false);
+      } else if (e.key === 'ArrowRight' || e.key === ' ') {
+        e.preventDefault();
+        setActiveIndex((i) => Math.min(slides.length - 1, i + 1));
+      } else if (e.key === 'ArrowLeft') {
+        e.preventDefault();
+        setActiveIndex((i) => Math.max(0, i - 1));
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isPresenting, slides.length]);
+
   const updateSlideElementText = (elType: 'title' | 'text', newContent: string) => {
     setSlides((prev) =>
       prev.map((slide, idx) => {
@@ -423,6 +441,8 @@ export const SlidesStudioScreen: React.FC<SlidesStudioScreenProps> = ({
       {/* Top Controls */}
       <div className="flex items-center gap-2">
         <input
+          id="slides-deck-title"
+          name="deckTitle"
           type="text"
           value={deckTitle}
           onChange={(e) => setDeckTitle(e.target.value)}
@@ -642,6 +662,8 @@ export const SlidesStudioScreen: React.FC<SlidesStudioScreenProps> = ({
         >
           <div className="space-y-2 flex-1 flex flex-col">
             <input
+              id="slides-active-title"
+              name="slideTitle"
               type="text"
               value={titleEl?.content || ''}
               onChange={(e) => updateSlideElementText('title', e.target.value)}
@@ -650,6 +672,8 @@ export const SlidesStudioScreen: React.FC<SlidesStudioScreenProps> = ({
               className="w-full bg-transparent text-lg font-extrabold text-white placeholder:text-slate-400/70 outline-none border-b border-white/10 focus:border-amber-400 pb-1"
             />
             <textarea
+              id="slides-active-body"
+              name="slideBody"
               value={bodyEl?.content || ''}
               onChange={(e) => updateSlideElementText('text', e.target.value)}
               placeholder="Slide body text or bullet points..."
