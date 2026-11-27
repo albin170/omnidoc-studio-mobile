@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { validateUploadFile } from '../engines/fileValidator';
 import { validateFileFormat } from '../engines/formatDetector';
 import { apiClient, ApiError } from '../services/apiClient';
+import { saveFileToDevice } from '../services/nativeBridge';
 import { offlineStore } from '../services/offlineStore';
 import { secureStorage } from '../services/secureStorage';
 
@@ -330,5 +331,73 @@ describe('Document Validation, Streaming Downloads, Network Resilience & Offline
     // Identical file with allowDuplicate=true performs an intentional second upload
     const u3 = await apiClient.uploadDocument(f1, undefined, undefined, { allowDuplicate: true });
     expect(u3.id).not.toBe(u1.id);
+  });
+
+  it('encrypts offlineStore per-user caches, enforces cross-user isolation, and expires stale entries', async () => {
+    offlineStore.setActiveUser('user-alpha');
+    await offlineStore.cacheDocuments([
+      {
+        id: 'doc-alpha',
+        org_id: 'org-a',
+        user_id: 'user-alpha',
+        filename: 'secret_alpha.pdf',
+        file_size: 4096,
+        mime_type: 'application/pdf',
+        format_type: 'pdf',
+        content_hash_sha256: 'hash-a',
+        version: 1,
+        created_at: new Date().toISOString(),
+        digital_twin: { page_count: 3, extracted_text_preview: 'Sensitive body text stripped from cache' },
+      },
+    ]);
+
+    const alphaDocs = await offlineStore.getCachedDocuments();
+    expect(alphaDocs).toHaveLength(1);
+    expect(alphaDocs[0].digital_twin?.extracted_text_preview).toBeUndefined();
+
+    // Switching active user MUST never expose User Alpha documents to User Beta
+    offlineStore.setActiveUser('user-beta');
+    expect(await offlineStore.getCachedDocuments()).toHaveLength(0);
+
+    // Expired TTL entries must purge cleanly and return []
+    await offlineStore.cacheDocuments(
+      [
+        {
+          id: 'doc-beta-expired',
+          org_id: 'org-b',
+          user_id: 'user-beta',
+          filename: 'expired.pdf',
+          file_size: 100,
+          mime_type: 'application/pdf',
+          format_type: 'pdf',
+          content_hash_sha256: 'hash-b',
+          version: 1,
+          created_at: new Date().toISOString(),
+        },
+      ],
+      1
+    );
+    await new Promise((r) => setTimeout(r, 25));
+    expect(await offlineStore.getCachedDocuments()).toHaveLength(0);
+
+    // Clean up alpha user cache cleanly
+    await offlineStore.clearUserCaches('user-alpha');
+    offlineStore.setActiveUser('user-alpha');
+    expect(await offlineStore.getCachedDocuments()).toHaveLength(0);
+    offlineStore.setActiveUser(null);
+  });
+
+  it('supports progress and cancellation during large-blob file saves', async () => {
+    const bigBlob = new Blob([new Uint8Array(1024 * 1024)], { type: 'application/pdf' });
+    const progress: number[] = [];
+    const saved = await saveFileToDevice(bigBlob, 'large_report.pdf', {
+      onProgress: (pct) => progress.push(pct),
+    });
+    expect(saved.path).toBe('large_report.pdf');
+    expect(progress[progress.length - 1]).toBe(100);
+
+    const aborted = new AbortController();
+    aborted.abort();
+    await expect(saveFileToDevice(bigBlob, 'aborted.pdf', { signal: aborted.signal })).rejects.toThrow(/cancelled/i);
   });
 });

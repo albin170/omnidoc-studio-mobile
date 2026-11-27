@@ -43,8 +43,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const wipeLocalSession = useCallback(async (notice?: string) => {
     apiClient.setToken(null);
-    await secureStorage.clearAll();
     await offlineStore.clearUserCaches();
+    offlineStore.setActiveUser(null);
+    await secureStorage.clearAll();
     setUser(null);
     setEntitlements(null);
     setUiConfig(null);
@@ -59,6 +60,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         apiClient.getUiConfig().catch(() => null),
       ]);
       const token = apiClient.getToken();
+      offlineStore.setActiveUser(me.id);
       const updatedMeta: AuthSessionMeta = {
         userId: me.id,
         orgId: me.org_id,
@@ -115,6 +117,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const storedMeta = await secureStorage.getSessionMeta();
 
       if (storedToken && storedMeta && !isJwtExpired(storedToken)) {
+        offlineStore.setActiveUser(storedMeta.userId);
         apiClient.setToken(storedToken);
         if (mounted) setUser(storedMeta);
         if (connected) {

@@ -129,12 +129,17 @@ export async function renderPdfPagesToImages(
       const canvas = document.createElement('canvas');
       canvas.width = viewport.width;
       canvas.height = viewport.height;
-      const ctx = canvas.getContext('2d')!;
-      await page.render({ canvasContext: ctx, viewport, canvas }).promise;
-      const blob = await new Promise<Blob>((resolve) => {
-        canvas.toBlob((b) => resolve(b || new Blob([])), `image/${format}`, 0.92);
-      });
-      imageBlobs.push(blob);
+      try {
+        const ctx = canvas.getContext('2d')!;
+        await page.render({ canvasContext: ctx, viewport, canvas }).promise;
+        const blob = await new Promise<Blob>((resolve) => {
+          canvas.toBlob((b) => resolve(b || new Blob([])), `image/${format}`, 0.92);
+        });
+        imageBlobs.push(blob);
+      } finally {
+        canvas.width = 0;
+        canvas.height = 0;
+      }
     }
 
     return imageBlobs;

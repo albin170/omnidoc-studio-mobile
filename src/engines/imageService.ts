@@ -12,13 +12,18 @@ async function rasterizeImageBlobToPngBytes(imageBlob: Blob): Promise<ArrayBuffe
     const canvas = document.createElement('canvas');
     canvas.width = Math.max(1, img.naturalWidth || img.width);
     canvas.height = Math.max(1, img.naturalHeight || img.height);
-    const ctx = canvas.getContext('2d');
-    if (!ctx) throw new Error('Canvas 2D context unavailable for image rasterization.');
-    ctx.drawImage(img, 0, 0);
-    const pngBlob = await new Promise<Blob>((resolve, reject) => {
-      canvas.toBlob((b) => (b ? resolve(b) : reject(new Error('PNG encoding failed.'))), 'image/png');
-    });
-    return await pngBlob.arrayBuffer();
+    try {
+      const ctx = canvas.getContext('2d');
+      if (!ctx) throw new Error('Canvas 2D context unavailable for image rasterization.');
+      ctx.drawImage(img, 0, 0);
+      const pngBlob = await new Promise<Blob>((resolve, reject) => {
+        canvas.toBlob((b) => (b ? resolve(b) : reject(new Error('PNG encoding failed.'))), 'image/png');
+      });
+      return await pngBlob.arrayBuffer();
+    } finally {
+      canvas.width = 0;
+      canvas.height = 0;
+    }
   } finally {
     URL.revokeObjectURL(url);
   }
@@ -97,17 +102,22 @@ export async function convertImageFormat(
     const canvas = document.createElement('canvas');
     canvas.width = img.naturalWidth;
     canvas.height = img.naturalHeight;
-    const ctx = canvas.getContext('2d')!;
-    if (targetFormat === 'jpg') {
-      ctx.fillStyle = '#ffffff';
-      ctx.fillRect(0, 0, canvas.width, canvas.height);
-    }
-    ctx.drawImage(img, 0, 0);
+    try {
+      const ctx = canvas.getContext('2d')!;
+      if (targetFormat === 'jpg') {
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+      }
+      ctx.drawImage(img, 0, 0);
 
-    const mime = targetFormat === 'jpg' ? 'image/jpeg' : `image/${targetFormat}`;
-    return await new Promise<Blob>((resolve) => {
-      canvas.toBlob((b) => resolve(b || new Blob([])), mime, quality);
-    });
+      const mime = targetFormat === 'jpg' ? 'image/jpeg' : `image/${targetFormat}`;
+      return await new Promise<Blob>((resolve) => {
+        canvas.toBlob((b) => resolve(b || new Blob([])), mime, quality);
+      });
+    } finally {
+      canvas.width = 0;
+      canvas.height = 0;
+    }
   } finally {
     URL.revokeObjectURL(url);
   }

@@ -149,16 +149,132 @@ export function base64ToUint8Array(base64: string): Uint8Array {
   return bytes;
 }
 
-export async function blobToBase64(blob: Blob): Promise<string> {
-  const buffer = await blob.arrayBuffer();
-  const bytes = new Uint8Array(buffer);
-  const chunkSize = 0x8000;
+export function revokePreviewUrl(url?: string | null): void {
+  if (!url || !url.startsWith('blob:') || typeof URL === 'undefined') return;
+  try {
+    URL.revokeObjectURL(url);
+  } catch {
+    // ignore
+  }
+}
+
+function uint8ArrayToBase64Chunk(bytes: Uint8Array): string {
+  const CHUNK_SIZE = 0x8000;
   let binary = '';
-  for (let i = 0; i < bytes.length; i += chunkSize) {
-    const slice = bytes.subarray(i, Math.min(i + chunkSize, bytes.length));
+  for (let i = 0; i < bytes.length; i += CHUNK_SIZE) {
+    const slice = bytes.subarray(i, Math.min(i + CHUNK_SIZE, bytes.length));
     binary += String.fromCharCode(...slice);
   }
   return btoa(binary);
+}
+
+export async function blobToBase64(blob: Blob): Promise<string> {
+  const buffer = await blob.arrayBuffer();
+  return uint8ArrayToBase64Chunk(new Uint8Array(buffer));
+}
+
+function mapNativeFileError(err: any, action: string): Error {
+  const msg = String(err?.message || err || '');
+  if (/enospc|no space|storage full|disk full/i.test(msg)) {
+    return new Error(`Insufficient device storage space to ${action}. Free up space and retry.`);
+  }
+  if (/eacces|permission|denied/i.test(msg)) {
+    return new Error(`Storage permission denied while trying to ${action}.`);
+  }
+  if (/abort|cancel/i.test(msg)) {
+    return new Error(`Operation cancelled while trying to ${action}.`);
+  }
+  return err instanceof Error ? err : new Error(msg || `Failed to ${action}.`);
+}
+
+async function writeBlobInChunks(
+  blob: Blob,
+  relPath: string,
+  directory: Directory,
+  options?: { signal?: AbortSignal; onProgress?: (percent: number) => void }
+): Promise<{ uri?: string }> {
+  // 384 KB is an exact multiple of 3 bytes so base64 chunks never require intermediate padding
+  const CHUNK_BYTES = 384 * 1024;
+  const totalBytes = blob.size;
+  let lastUri: string | undefined;
+
+  try {
+    if (options?.signal?.aborted) {
+      throw new Error('Operation cancelled by user.');
+    }
+
+    if (totalBytes === 0) {
+      const res = await Filesystem.writeFile({ path: relPath, data: '', directory, recursive: true });
+      options?.onProgress?.(100);
+      return { uri: res.uri };
+    }
+
+    let offset = 0;
+    let first = true;
+    while (offset < totalBytes) {
+      if (options?.signal?.aborted) {
+        throw new Error('Operation cancelled by user.');
+      }
+      const end = Math.min(offset + CHUNK_BYTES, totalBytes);
+      const sliceBuf = await blob.slice(offset, end).arrayBuffer();
+      const b64Chunk = uint8ArrayToBase64Chunk(new Uint8Array(sliceBuf));
+
+      if (first) {
+        const res = await Filesystem.writeFile({
+          path: relPath,
+          data: b64Chunk,
+          directory,
+          recursive: true,
+        });
+        lastUri = res.uri;
+        first = false;
+      } else {
+        await Filesystem.appendFile({
+          path: relPath,
+          data: b64Chunk,
+          directory,
+        });
+      }
+
+      offset = end;
+      options?.onProgress?.(Math.min(99, Math.round((offset / totalBytes) * 100)));
+    }
+
+    if (typeof (Filesystem as any).getUri === 'function') {
+      try {
+        const uriRes = await (Filesystem as any).getUri({ path: relPath, directory });
+        if (uriRes?.uri) lastUri = uriRes.uri;
+      } catch {
+        // keep writeFile uri
+      }
+    }
+
+    options?.onProgress?.(100);
+    return { uri: lastUri };
+  } catch (err: any) {
+    try {
+      await Filesystem.deleteFile({ path: relPath, directory });
+    } catch {
+      // ignore cleanup error
+    }
+    throw mapNativeFileError(err, `write ${relPath}`);
+  }
+}
+
+async function cleanupStaleShareCache(maxAgeMs = 30 * 60 * 1000): Promise<void> {
+  if (!isNativePlatform()) return;
+  try {
+    const listed = await Filesystem.readdir({ path: 'OmniDocShare', directory: Directory.Cache });
+    const cutoff = Date.now() - maxAgeMs;
+    for (const entry of listed.files || []) {
+      const mtime = Number((entry as any)?.mtime || 0);
+      if (mtime > 0 && mtime < cutoff) {
+        await Filesystem.deleteFile({ path: `OmniDocShare/${entry.name}`, directory: Directory.Cache }).catch(() => {});
+      }
+    }
+  } catch {
+    // directory may not exist yet
+  }
 }
 
 export async function hapticTap(style: 'light' | 'medium' = 'light'): Promise<void> {
@@ -171,36 +287,57 @@ export async function hapticTap(style: 'light' | 'medium' = 'light'): Promise<vo
 }
 
 export async function captureDocumentPhoto(source: 'camera' | 'prompt' = 'prompt'): Promise<CapturedPhoto> {
+  const preferUri = isNativePlatform();
   const photo = await Camera.getPhoto({
     quality: 88,
     allowEditing: false,
-    resultType: CameraResultType.Base64,
+    resultType: preferUri ? CameraResultType.Uri : CameraResultType.Base64,
     source: source === 'camera' ? CameraSource.Camera : CameraSource.Prompt,
     correctOrientation: true,
   });
+
+  const fmt = (photo.format || 'jpeg').toLowerCase() === 'png' ? 'png' : 'jpeg';
+  const mimeType: 'image/jpeg' | 'image/png' = fmt === 'png' ? 'image/png' : 'image/jpeg';
+  const filename = `scan_${Date.now()}.${fmt === 'png' ? 'png' : 'jpg'}`;
+
+  if (photo.webPath) {
+    const res = await fetch(photo.webPath);
+    const blob = await res.blob();
+    const bytes = new Uint8Array(await blob.arrayBuffer());
+    const previewUrl =
+      typeof URL !== 'undefined' && typeof URL.createObjectURL === 'function'
+        ? URL.createObjectURL(blob)
+        : photo.webPath;
+    return { bytes, mimeType, filename, previewUrl };
+  }
 
   if (!photo.base64String) {
     throw new Error('No image data returned from camera.');
   }
 
-  const fmt = (photo.format || 'jpeg').toLowerCase() === 'png' ? 'png' : 'jpeg';
-  const mimeType: 'image/jpeg' | 'image/png' = fmt === 'png' ? 'image/png' : 'image/jpeg';
   const bytes = base64ToUint8Array(photo.base64String);
-  const filename = `scan_${Date.now()}.${fmt === 'png' ? 'png' : 'jpg'}`;
+  const blob = new Blob([bytes as any], { type: mimeType });
+  const previewUrl =
+    typeof URL !== 'undefined' && typeof URL.createObjectURL === 'function'
+      ? URL.createObjectURL(blob)
+      : `data:${mimeType};base64,${photo.base64String}`;
 
   return {
     bytes,
     mimeType,
     filename,
-    previewUrl: `data:${mimeType};base64,${photo.base64String}`,
+    previewUrl,
   };
 }
 
-export async function saveFileToDevice(blob: Blob, filename: string): Promise<{ path: string; uri?: string }> {
+export async function saveFileToDevice(
+  blob: Blob,
+  filename: string,
+  options?: { signal?: AbortSignal; onProgress?: (percent: number) => void }
+): Promise<{ path: string; uri?: string }> {
   const safeName = filename.replace(/[\\/:*?"<>|]/g, '_');
 
   if (isNativePlatform()) {
-    const base64Data = await blobToBase64(blob);
     const relPath = `OmniDoc/${safeName}`;
     try {
       await Filesystem.mkdir({
@@ -211,14 +348,14 @@ export async function saveFileToDevice(blob: Blob, filename: string): Promise<{ 
     } catch {
       // directory may already exist
     }
-    const res = await Filesystem.writeFile({
-      path: relPath,
-      data: base64Data,
-      directory: Directory.Documents,
-      recursive: true,
-    });
+    const res = await writeBlobInChunks(blob, relPath, Directory.Documents, options);
     return { path: `Documents/${relPath}`, uri: res.uri };
   }
+
+  if (options?.signal?.aborted) {
+    throw new Error('Operation cancelled by user.');
+  }
+  options?.onProgress?.(100);
 
   // Browser fallback download
   if (typeof document !== 'undefined') {
@@ -229,22 +366,32 @@ export async function saveFileToDevice(blob: Blob, filename: string): Promise<{ 
     document.body.appendChild(a);
     a.click();
     a.remove();
-    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    setTimeout(() => revokePreviewUrl(url), 1000);
   }
   return { path: safeName };
 }
 
-export async function shareDocumentFile(blob: Blob, filename: string, title = 'Share Document'): Promise<void> {
+export async function shareDocumentFile(
+  blob: Blob,
+  filename: string,
+  title = 'Share Document',
+  options?: { signal?: AbortSignal; onProgress?: (percent: number) => void }
+): Promise<void> {
   const safeName = filename.replace(/[\\/:*?"<>|]/g, '_');
 
   if (isNativePlatform()) {
-    const base64Data = await blobToBase64(blob);
-    const res = await Filesystem.writeFile({
-      path: safeName,
-      data: base64Data,
-      directory: Directory.Cache,
-      recursive: true,
-    });
+    await cleanupStaleShareCache();
+    const relPath = `OmniDocShare/${Date.now()}_${safeName}`;
+    try {
+      await Filesystem.mkdir({
+        path: 'OmniDocShare',
+        directory: Directory.Cache,
+        recursive: true,
+      });
+    } catch {
+      // directory may already exist
+    }
+    const res = await writeBlobInChunks(blob, relPath, Directory.Cache, options);
     await Share.share({
       title,
       text: `Shared from OmniDoc Studio Mobile: ${safeName}`,
@@ -252,6 +399,10 @@ export async function shareDocumentFile(blob: Blob, filename: string, title = 'S
       dialogTitle: title,
     });
     return;
+  }
+
+  if (options?.signal?.aborted) {
+    throw new Error('Operation cancelled by user.');
   }
 
   if (typeof navigator !== 'undefined' && typeof (navigator as any).share === 'function') {
@@ -263,7 +414,7 @@ export async function shareDocumentFile(blob: Blob, filename: string, title = 'S
   }
 
   // Web fallback: save file locally
-  await saveFileToDevice(blob, safeName);
+  await saveFileToDevice(blob, safeName, options);
 }
 
 export async function getNetworkConnected(): Promise<boolean> {

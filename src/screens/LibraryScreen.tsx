@@ -68,7 +68,14 @@ function renderDigitalTwinSummary(twin: any): React.ReactNode {
   const summaryText =
     twin.summary || twin.executive_summary || twin.description || twin.abstract || null;
   const docType = twin.document_type || twin.category || twin.classification || null;
-  const pageCount = twin.page_count ?? twin.pages ?? null;
+  const pageCount =
+    typeof twin.page_count === 'number'
+      ? twin.page_count
+      : Array.isArray(twin.pages)
+        ? twin.pages.length
+        : typeof twin.pages === 'number'
+          ? twin.pages
+          : null;
   const language = twin.language || null;
   const keywords = Array.isArray(twin.keywords)
     ? twin.keywords
