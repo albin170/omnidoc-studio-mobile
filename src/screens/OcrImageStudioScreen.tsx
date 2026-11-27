@@ -18,7 +18,7 @@ import {
 import { useAuth } from '../context/AuthContext';
 import { createDocxBlob } from '../engines/docxService';
 import { formatFileSize } from '../engines/formatDetector';
-import { compressAndResizeImage, convertImageFormat, convertImageToPdf } from '../engines/imageService';
+import { compressAndResizeImage, convertImageToPdf } from '../engines/imageService';
 import { performMobileOcr, MobileOcrResult } from '../engines/ocrService';
 import { imagesToPdf, renderPdfPagesToImages } from '../engines/pdfService';
 import { apiClient } from '../services/apiClient';

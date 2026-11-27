@@ -71,7 +71,7 @@ export function parseDeepLinkUrl(rawUrl: string): DeepLinkEvent | null {
 
     let host = '';
     let path = '/';
-    let redirectUri = trimmed.split('?')[0].split('#')[0];
+    const redirectUri = trimmed.split('?')[0].split('#')[0];
 
     if (scheme === 'https') {
       if (parsed.hostname.toLowerCase() !== 'omnidoc-studio-jet.vercel.app') {

@@ -50,7 +50,10 @@ export function sanitizeHtml(html: string): string {
       for (const attr of Array.from(el.attributes)) {
         const name = attr.name.toLowerCase();
         const rawVal = attr.value;
-        const normalizedVal = rawVal.replace(/[\u0000-\u0020]+/g, '').toLowerCase();
+        const normalizedVal = Array.from(rawVal)
+          .filter((ch) => ch.charCodeAt(0) > 0x20)
+          .join('')
+          .toLowerCase();
 
         if (name.startsWith('on')) {
           el.removeAttribute(attr.name);

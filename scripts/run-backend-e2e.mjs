@@ -334,7 +334,165 @@ try {
   assert.equal(afterLogout.status, 401);
   console.log('[E2E] 12. Logout & token revocation (401) passed');
 
-  console.log('\nALL 12 REAL BACKEND E2E CHECKS PASSED!');
+  // 13. AI consent opt-out & consent audit history
+  const noAiEmail = `mobile_noai_${ts}@example.com`;
+  const noAiReg = await api('/auth/register', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      email: noAiEmail,
+      password,
+      full_name: 'Mobile NoAI E2E',
+      organization_name: 'Mobile NoAI Org',
+      terms_accepted: true,
+      terms_version: '2026.1',
+      privacy_accepted: true,
+      privacy_version: '2026.1',
+      ai_consent: false,
+      marketing_consent: false,
+    }),
+  });
+  assert.equal(noAiReg.status, 201, `No-AI register failed: ${JSON.stringify(noAiReg.data)}`);
+  assert.equal(noAiReg.data.ai_consent, false);
+
+  const noAiLogin = await api('/auth/login', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email: noAiEmail, password }),
+  });
+  assert.equal(noAiLogin.status, 200);
+  let noAiToken = noAiLogin.data.access_token;
+
+  const noAiMe = await api('/auth/me', {
+    headers: { Authorization: `Bearer ${noAiToken}` },
+  });
+  assert.equal(noAiMe.status, 200);
+  assert.equal(noAiMe.data.ai_consent, false);
+
+  const consentHist = await api('/auth/consent/history', {
+    headers: { Authorization: `Bearer ${noAiToken}` },
+  });
+  assert.equal(consentHist.status, 200);
+  const aiConsentRec = consentHist.data.find((c) => c.consent_type === 'ai_processing');
+  const termsRec = consentHist.data.find((c) => c.consent_type === 'terms_and_conditions');
+  assert.ok(aiConsentRec && aiConsentRec.granted === false, 'ai_processing consent must stay false');
+  assert.ok(termsRec && termsRec.granted === true, 'terms_and_conditions must be true');
+  console.log('[E2E] 13. AI consent opt-out & consent history audit passed');
+
+  // 14. One-time mobile authorization code exchange & replay/redirect protection
+  const redirectUri = 'https://omnidoc-studio-jet.vercel.app/mobile/auth/callback';
+  const codeCreate = await api('/auth/mobile-code', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${noAiToken}`,
+    },
+    body: JSON.stringify({ redirect_uri: redirectUri }),
+  });
+  assert.ok(
+    codeCreate.status === 200 || codeCreate.status === 201,
+    `mobile-code create failed: ${codeCreate.status} ${JSON.stringify(codeCreate.data)}`
+  );
+  assert.ok(codeCreate.data.code, 'mobile-code must return an opaque code');
+
+  const exchangeRes = await api('/auth/mobile-code/exchange', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ code: codeCreate.data.code, redirect_uri: redirectUri }),
+  });
+  assert.equal(exchangeRes.status, 200, `mobile-code exchange failed: ${JSON.stringify(exchangeRes.data)}`);
+  assert.ok(exchangeRes.data.access_token);
+  noAiToken = exchangeRes.data.access_token;
+
+  const replayRes = await api('/auth/mobile-code/exchange', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ code: codeCreate.data.code, redirect_uri: redirectUri }),
+  });
+  assert.equal(replayRes.status, 400, 'Replayed mobile-code must be rejected with 400');
+
+  const badRedirectRes = await api('/auth/mobile-code', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${noAiToken}`,
+    },
+    body: JSON.stringify({ redirect_uri: 'https://evil.example.com/steal' }),
+  });
+  assert.equal(badRedirectRes.status, 400, 'Untrusted redirect_uri must be rejected with 400');
+  console.log('[E2E] 14. Mobile one-time auth code exchange & replay/redirect protection passed');
+
+  // 15. Workspace collaboration + cross-org 403 isolation
+  const wsCreate = await api('/workspaces', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${noAiToken}`,
+    },
+    body: JSON.stringify({ name: `Mobile Collab ${ts}`, description: 'E2E workspace verification' }),
+  });
+  assert.ok(wsCreate.status === 200 || wsCreate.status === 201, `Workspace create failed: ${wsCreate.status}`);
+  const wsId = wsCreate.data.id;
+
+  const wsSampleTxtBytes = Buffer.from(
+    'OmniDoc Studio Mobile E2E Collaboration Document.\nContract clause: payment net 30 days with mutual confidentiality.\n'
+  );
+  const wsForm = new FormData();
+  wsForm.append('file', new Blob([wsSampleTxtBytes], { type: 'text/plain' }), 'workspace-e2e.txt');
+  const wsUploadRes = await fetch(`${BASE_URL}/documents/upload`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${noAiToken}` },
+    body: wsForm,
+  });
+  const wsUploadJson = await wsUploadRes.json();
+  assert.equal(wsUploadRes.status, 201, `Workspace sample upload failed: ${JSON.stringify(wsUploadJson)}`);
+
+  const wsShareDoc = await api(`/workspaces/${wsId}/documents`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${noAiToken}`,
+    },
+    body: JSON.stringify({ document_id: wsUploadJson.id, permission: 'edit' }),
+  });
+  assert.ok(wsShareDoc.status === 200 || wsShareDoc.status === 201, `Share doc failed: ${wsShareDoc.status}`);
+
+  const wsChat = await api(`/workspaces/${wsId}/messages`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${noAiToken}`,
+    },
+    body: JSON.stringify({ body: 'Mobile E2E verification message' }),
+  });
+  assert.ok(wsChat.status === 200 || wsChat.status === 201, `Workspace message failed: ${wsChat.status}`);
+
+  const crossOrgMembers = await api(`/workspaces/${wsId}/members`, {
+    headers: { Authorization: `Bearer ${tokenB}` },
+  });
+  assert.equal(crossOrgMembers.status, 403, 'Cross-org user must receive 403 on workspace members');
+  const crossOrgDocs = await api(`/workspaces/${wsId}/documents`, {
+    headers: { Authorization: `Bearer ${tokenB}` },
+  });
+  assert.equal(crossOrgDocs.status, 403, 'Cross-org user must receive 403 on workspace documents');
+  console.log('[E2E] 15. Workspace collaboration & cross-org 403 isolation passed');
+
+  // 16. Tools catalog & RAG index availability
+  const toolsList = await api('/tools', {
+    headers: { Authorization: `Bearer ${noAiToken}` },
+  });
+  assert.equal(toolsList.status, 200);
+  const ragIdx = await api(`/local-ai/rag/index/${wsUploadJson.id}`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${noAiToken}` },
+  });
+  assert.ok(
+    ragIdx.status === 200 || ragIdx.status === 201,
+    `RAG index returned unexpected ${ragIdx.status}: ${JSON.stringify(ragIdx.data)}`
+  );
+  console.log('[E2E] 16. Tools catalog & Local-AI RAG index passed');
+
+  console.log('\nALL 16 REAL BACKEND E2E CHECKS PASSED!');
 } catch (err) {
   console.error('[E2E] FAILED:', err);
   console.error('--- SERVER LOGS ---\n', serverLogs);
