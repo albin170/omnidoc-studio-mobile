@@ -49,6 +49,10 @@ import {
   splitPdfByRange,
   toSafeUint8Array,
 } from '../engines/pdfService';
+import {
+  RedactionVerificationReport,
+  searchAndRedactPdf,
+} from '../engines/pdfRedactionService';
 import { apiClient } from '../services/apiClient';
 import { captureDocumentPhoto, hapticTap, saveFileToDevice, shareDocumentFile } from '../services/nativeBridge';
 import { offlineStore } from '../services/offlineStore';
@@ -112,6 +116,12 @@ export const PdfStudioScreen: React.FC<PdfStudioScreenProps> = ({ initialFile, o
   const [hasSignatureStrokes, setHasSignatureStrokes] = useState(false);
   const signatureCanvasRef = useRef<HTMLCanvasElement>(null);
   const isDrawingSigRef = useRef(false);
+
+  // Genuine Content Redaction
+  const [showRedactSheet, setShowRedactSheet] = useState(false);
+  const [redactTermInput, setRedactTermInput] = useState('');
+  const [redactTerms, setRedactTerms] = useState<string[]>([]);
+  const [redactionReport, setRedactionReport] = useState<RedactionVerificationReport | null>(null);
 
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const openInputRef = useRef<HTMLInputElement>(null);
@@ -397,6 +407,48 @@ export const PdfStudioScreen: React.FC<PdfStudioScreenProps> = ({ initialFile, o
       }
     } catch (err: any) {
       onToast('error', err?.message || 'PDF compression failed');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleRunPermanentRedaction = async () => {
+    if (!pdfBytes) return;
+    const terms = Array.from(
+      new Set(
+        [...redactTerms, ...(redactTermInput.trim() ? [redactTermInput.trim()] : [])]
+          .map((t) => t.trim())
+          .filter(Boolean)
+      )
+    );
+    if (terms.length === 0) {
+      onToast('error', 'Enter a text term to search and permanently redact.');
+      return;
+    }
+
+    setBusy(true);
+    try {
+      const result = await searchAndRedactPdf(pdfBytes, terms);
+      await loadBytes(result.pdfBytes, fileName, currentPage);
+      setRedactionReport(result.report);
+      setRedactTerms([]);
+      setRedactTermInput('');
+      await offlineStore.appendHistory({
+        kind: 'pdf_operation',
+        title: `Redacted ${fileName} (${result.report.status})`,
+        sourceFormat: 'pdf',
+        targetFormat: 'pdf',
+        sizeBytes: result.pdfBytes.byteLength,
+        status: result.report.isSanitized ? 'completed' : 'failed',
+      });
+      await hapticTap('medium');
+      if (result.report.isSanitized) {
+        onToast('success', `Verified redaction (${result.report.redactionsApplied} target(s) scrubbed).`);
+      } else {
+        onToast('error', `Redaction status: ${result.report.status}. Review verification report.`);
+      }
+    } catch (err: any) {
+      onToast('error', err?.message || 'PDF redaction failed');
     } finally {
       setBusy(false);
     }
@@ -958,6 +1010,115 @@ export const PdfStudioScreen: React.FC<PdfStudioScreenProps> = ({ initialFile, o
             >
               <FileText className="w-4 h-4 text-emerald-400" /> Extract Text
             </button>
+          </div>
+
+          {/* Genuine Content Redaction Sheet */}
+          <div className="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden">
+            <button
+              type="button"
+              onClick={() => setShowRedactSheet((s) => !s)}
+              className="w-full p-3.5 flex items-center justify-between text-left"
+            >
+              <span className="text-xs font-semibold text-slate-200 flex items-center gap-2">
+                <Scissors className="w-4 h-4 text-rose-400" />
+                Permanent Content Redaction
+                {redactTerms.length > 0 && (
+                  <span className="px-2 py-0.5 rounded-full bg-rose-500/20 text-rose-300 text-[10px] font-bold">
+                    {redactTerms.length} queued
+                  </span>
+                )}
+              </span>
+              <span className="text-[11px] text-rose-300 font-semibold">
+                {showRedactSheet ? 'Hide' : 'Open'}
+              </span>
+            </button>
+
+            {showRedactSheet && (
+              <div className="px-3.5 pb-4 pt-2 space-y-3 border-t border-slate-800">
+                <p className="text-[11px] text-slate-300 leading-relaxed">
+                  Scrubs matching text and metadata from PDF content streams, removes page annotations, draws opaque
+                  blackouts, and verifies zero residual matches via PDF.js extraction &amp; binary inspection.
+                </p>
+
+                <div className="flex gap-2">
+                  <input
+                    id="pdf-redact-term"
+                    name="redactTerm"
+                    type="text"
+                    value={redactTermInput}
+                    onChange={(e) => setRedactTermInput(e.target.value)}
+                    placeholder="Enter sensitive text (e.g. SSN or secret)..."
+                    className="flex-1 h-9 px-3 rounded-xl bg-slate-950 border border-slate-800 text-xs text-slate-100"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const clean = redactTermInput.trim();
+                      if (!clean) return;
+                      setRedactTerms((prev) => Array.from(new Set([...prev, clean])));
+                      setRedactTermInput('');
+                    }}
+                    className="h-9 px-3 rounded-xl bg-slate-800 text-xs font-semibold text-slate-200"
+                  >
+                    Add
+                  </button>
+                </div>
+
+                {redactTerms.length > 0 && (
+                  <div className="flex flex-wrap gap-1.5">
+                    {redactTerms.map((term) => (
+                      <span
+                        key={term}
+                        className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-rose-500/15 border border-rose-500/30 text-[11px] text-rose-200"
+                      >
+                        {term}
+                        <button
+                          type="button"
+                          onClick={() => setRedactTerms((prev) => prev.filter((t) => t !== term))}
+                          aria-label={`Remove redact term ${term}`}
+                          className="text-rose-300 hover:text-white"
+                        >
+                          <X className="w-3 h-3" />
+                        </button>
+                      </span>
+                    ))}
+                  </div>
+                )}
+
+                <button
+                  type="button"
+                  disabled={busy || (!redactTermInput.trim() && redactTerms.length === 0)}
+                  onClick={handleRunPermanentRedaction}
+                  className="w-full h-10 rounded-xl bg-rose-600 text-xs font-semibold text-white flex items-center justify-center gap-1.5 disabled:opacity-40"
+                >
+                  <Check className="w-4 h-4" /> Search &amp; Permanently Redact
+                </button>
+
+                {redactionReport && (
+                  <div
+                    className={`rounded-xl p-3 border text-[11px] space-y-1 ${
+                      redactionReport.isSanitized
+                        ? 'bg-emerald-950/50 border-emerald-500/40 text-emerald-200'
+                        : 'bg-amber-950/60 border-amber-500/40 text-amber-200'
+                    }`}
+                  >
+                    <p className="font-semibold">
+                      Verification Status: {redactionReport.status} ({redactionReport.redactionsApplied} applied)
+                    </p>
+                    <p>
+                      Metadata cleared: {redactionReport.metadataCleared ? 'Yes' : 'No'} · Residual matches:{' '}
+                      {redactionReport.residualMatches.length}
+                    </p>
+                    {redactionReport.imagesDetectedOnRedactedPages && (
+                      <p className="text-amber-300">
+                        Raster images detected on redacted pages; scanned pixels require image-level masking or OCR
+                        re-creation.
+                      </p>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
           </div>
 
           {/* Visual Annotations & Overlays Sheet */}

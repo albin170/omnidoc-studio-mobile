@@ -193,7 +193,7 @@ async function writeBlobInChunks(
   directory: Directory,
   options?: { signal?: AbortSignal; onProgress?: (percent: number) => void }
 ): Promise<{ uri?: string }> {
-  // 384 KB is an exact multiple of 3 bytes so base64 chunks never require intermediate padding
+  // 384 KB is a multiple of 3 bytes so base64 chunks never require intermediate padding
   const CHUNK_BYTES = 384 * 1024;
   const totalBytes = blob.size;
   let lastUri: string | undefined;
@@ -436,7 +436,7 @@ export function subscribeNetworkChanges(onChange: (connected: boolean) => void):
     .then((h) => {
       handle = h;
     })
-    .catch(() => {});
+    .catch(() => { });
 
   const onOnline = () => active && onChange(true);
   const onOffline = () => active && onChange(false);
@@ -447,7 +447,7 @@ export function subscribeNetworkChanges(onChange: (connected: boolean) => void):
 
   return () => {
     active = false;
-    handle?.remove().catch(() => {});
+    handle?.remove().catch(() => { });
     if (typeof window !== 'undefined') {
       window.removeEventListener('online', onOnline);
       window.removeEventListener('offline', onOffline);
@@ -474,9 +474,9 @@ export function registerAppLifecycle(handlers: {
   })
     .then((h) => {
       if (active) handles.push(h);
-      else h.remove().catch(() => {});
+      else h.remove().catch(() => { });
     })
-    .catch(() => {});
+    .catch(() => { });
 
   if (handlers.onBackButton) {
     App.addListener('backButton', () => {
@@ -484,9 +484,9 @@ export function registerAppLifecycle(handlers: {
     })
       .then((h) => {
         if (active) handles.push(h);
-        else h.remove().catch(() => {});
+        else h.remove().catch(() => { });
       })
-      .catch(() => {});
+      .catch(() => { });
   }
 
   if (handlers.onAppUrlOpen) {
@@ -503,18 +503,18 @@ export function registerAppLifecycle(handlers: {
     })
       .then((h) => {
         if (active) handles.push(h);
-        else h.remove().catch(() => {});
+        else h.remove().catch(() => { });
       })
-      .catch(() => {});
+      .catch(() => { });
 
     // Handle cold-start deep links when the app is launched from a closed state.
     App.getLaunchUrl()
       .then((launch) => handleIncomingUrl(launch?.url))
-      .catch(() => {});
+      .catch(() => { });
   }
 
   return () => {
     active = false;
-    handles.forEach((h) => h.remove().catch(() => {}));
+    handles.forEach((h) => h.remove().catch(() => { }));
   };
 }

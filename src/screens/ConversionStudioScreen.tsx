@@ -18,6 +18,7 @@ import {
   createBatchZipArchive,
   executeFileConversion,
   getConversionCompatibilityReport,
+  validateConversionOutput,
 } from '../engines/converter';
 import { detectFileFormat, FORMAT_REGISTRY, formatFileSize } from '../engines/formatDetector';
 import { apiClient } from '../services/apiClient';
@@ -209,6 +210,7 @@ export const ConversionStudioScreen: React.FC<ConversionStudioScreenProps> = ({ 
         const dotIdx = job.sourceFile.name.lastIndexOf('.');
         const baseName = dotIdx > 0 ? job.sourceFile.name.slice(0, dotIdx) : job.sourceFile.name;
         const resultFileName = toolRes.data?.filename || `${baseName}.${job.targetFormat}`;
+        await validateConversionOutput(resultBlob, resultFileName, job.targetFormat);
 
         setJobs((prev) =>
           prev.map((j) =>
@@ -446,7 +448,7 @@ export const ConversionStudioScreen: React.FC<ConversionStudioScreenProps> = ({ 
         <div className="space-y-3">
           {jobs.map((job) => {
             const allowedTargets = FORMAT_REGISTRY[job.sourceFormat]?.allowedConversions || ['pdf'];
-            const compat = getConversionCompatibilityReport(job.sourceFormat, job.targetFormat);
+            const compat = getConversionCompatibilityReport(job.sourceFormat, job.targetFormat, executionMode);
             const stepMsg = stepLabels[job.id];
 
             return (

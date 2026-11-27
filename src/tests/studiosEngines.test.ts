@@ -5,6 +5,7 @@ import {
   createBatchZipArchive,
   executeFileConversion,
   getConversionCompatibilityReport,
+  validateConversionOutput,
 } from '../engines/converter';
 import {
   convertTextOrDocxToPdf,
@@ -13,12 +14,14 @@ import {
   htmlToDocxItems,
   sanitizeHtml,
 } from '../engines/docxService';
+import { searchAndRedactPdf } from '../engines/pdfRedactionService';
 import {
   applyPdfAnnotations,
   compressPdf,
   countTextOccurrencesInPdf,
   deletePdfPage,
   duplicatePdfPage,
+  extractTextFromPdf,
   insertBlankPage,
   mergePdfFiles,
   reorderPdfPages,
@@ -262,6 +265,62 @@ describe('Mobile Document Engines (PDF, Word, PowerPoint, Sheets, Batch Conversi
     expect(getConversionCompatibilityReport('png', 'jpg').fidelity).toBe('native');
     expect(getConversionCompatibilityReport('pdf', 'png').fidelity).toBe('rasterized');
     expect(getConversionCompatibilityReport('pdf', 'docx').fidelity).toBe('extraction');
+    expect(getConversionCompatibilityReport('docx', 'pdf', 'cloud').fidelity).toBe('backend');
     expect(getConversionCompatibilityReport('png', 'xlsx').supported).toBe(false);
+
+    await expect(
+      validateConversionOutput(new Blob(['not a pdf']), 'broken.pdf', 'pdf')
+    ).rejects.toThrow();
+    await expect(validateConversionOutput(new Blob([]), 'empty.pdf', 'pdf')).rejects.toThrow(/empty/i);
+  });
+
+  it('performs genuine destructive PDF content redaction verified by text extraction and binary stream inspection', async () => {
+    const doc = await PDFDocument.create();
+    doc.setTitle('Secret Plan');
+    doc.setAuthor('Secret Author');
+    const page = doc.addPage([595, 842]);
+    page.drawText('Public Header', { x: 50, y: 760, size: 16 });
+    page.drawText('CONFIDENTIAL-SSN-999-88-7777', { x: 50, y: 700, size: 14 });
+    const bytes = await doc.save();
+
+    const preText = await extractTextFromPdf(bytes);
+    expect(preText).toContain('CONFIDENTIAL-SSN-999-88-7777');
+
+    const redacted = await searchAndRedactPdf(bytes, ['CONFIDENTIAL-SSN-999-88-7777']);
+    expect(redacted.report.status).toBe('Verified');
+    expect(redacted.report.isSanitized).toBe(true);
+    expect(redacted.report.residualTextFound).toBe(false);
+    expect(redacted.report.metadataCleared).toBe(true);
+    expect(redacted.report.redactionsApplied).toBeGreaterThanOrEqual(1);
+
+    const postText = await extractTextFromPdf(redacted.pdfBytes);
+    expect(postText).toContain('Public Header');
+    expect(postText).not.toContain('999-88-7777');
+    expect(postText).not.toContain('CONFIDENTIAL-SSN');
+
+    const rawLatin1 = new TextDecoder('latin1').decode(redacted.pdfBytes);
+    expect(rawLatin1).not.toContain('999-88-7777');
+  });
+
+  it('rejects malformed or spoofed XLSX and safely handles malformed PPTX or oversized spreadsheet files', async () => {
+    const malformedXlsx = new File(['NOT_A_ZIP_OR_WORKBOOK'], 'broken.xlsx', {
+      type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    });
+    await expect(executeFileConversion(malformedXlsx, 'xlsx', 'pdf')).rejects.toThrow();
+
+    const malformedPptx = new File(['corrupted-pptx-bytes'], 'broken.pptx', {
+      type: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+    });
+    const fallbackSlides = await extractTextFromPptxFile(malformedPptx);
+    expect(fallbackSlides[0]).toContain('corrupted-pptx-bytes');
+
+    // Reject oversized CSV/XLSX over 25 MB safely without memory crash
+    const fakeHuge = {
+      name: 'huge.xlsx',
+      size: 26 * 1024 * 1024,
+      type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      arrayBuffer: async () => new ArrayBuffer(0),
+    } as unknown as File;
+    await expect(parseSpreadsheetFile(fakeHuge)).rejects.toThrow(/25MB/i);
   });
 });

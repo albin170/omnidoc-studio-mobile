@@ -15,10 +15,37 @@ export interface ConversionResult {
 
 export interface ConversionCompatibilityReport {
   supported: boolean;
-  fidelity: 'native' | 'extraction' | 'rasterized' | 'unsupported';
+  fidelity: 'native' | 'extraction' | 'rasterized' | 'backend' | 'unsupported';
   label: string;
   summary: string;
   caveats: string[];
+}
+
+export async function validateConversionOutput(
+  blob: Blob,
+  fileName: string,
+  targetFormat: FileFormat
+): Promise<void> {
+  if (!blob || blob.size === 0) {
+    throw new Error(`Conversion produced an empty output file (${fileName}).`);
+  }
+
+  const lowerName = fileName.toLowerCase();
+  if (lowerName.endsWith('.zip')) {
+    const header = new Uint8Array(await blob.slice(0, 4).arrayBuffer());
+    if (header.length < 4 || header[0] !== 0x50 || header[1] !== 0x4b || header[2] !== 0x03 || header[3] !== 0x04) {
+      throw new Error(`Conversion output "${fileName}" failed ZIP header validation.`);
+    }
+    return;
+  }
+
+  if (['pdf', 'docx', 'pptx', 'xlsx', 'png', 'jpg', 'webp'].includes(targetFormat)) {
+    const outFile = new File([blob], fileName, { type: blob.type || FORMAT_REGISTRY[targetFormat].mimeType });
+    const validation = await validateFileFormat(outFile);
+    if (!validation.valid) {
+      throw new Error(validation.error || `Converted output "${fileName}" failed ${targetFormat.toUpperCase()} integrity validation.`);
+    }
+  }
 }
 
 export function escapeHtml(str: string): string {
@@ -32,6 +59,20 @@ export function escapeHtml(str: string): string {
 }
 
 export async function executeFileConversion(
+  file: File,
+  sourceFormat: FileFormat,
+  targetFormat: FileFormat,
+  options?: ConversionOptions,
+  onProgress?: (progress: number, step: string) => void
+): Promise<ConversionResult> {
+  const result = await executeFileConversionInternal(file, sourceFormat, targetFormat, options, onProgress);
+  if (sourceFormat !== targetFormat) {
+    await validateConversionOutput(result.blob, result.fileName, targetFormat);
+  }
+  return result;
+}
+
+async function executeFileConversionInternal(
   file: File,
   sourceFormat: FileFormat,
   targetFormat: FileFormat,
@@ -377,8 +418,29 @@ export async function createBatchZipArchive(jobs: ConversionJob[]): Promise<Blob
  */
 export function getConversionCompatibilityReport(
   sourceFormat: FileFormat,
-  targetFormat: FileFormat
+  targetFormat: FileFormat,
+  mode: 'device' | 'cloud' = 'device'
 ): ConversionCompatibilityReport {
+  if (mode === 'cloud') {
+    const allowed = FORMAT_REGISTRY[sourceFormat]?.allowedConversions || [];
+    if (sourceFormat !== targetFormat && !allowed.includes(targetFormat)) {
+      return {
+        supported: false,
+        fidelity: 'unsupported',
+        label: 'Unsupported Route',
+        summary: `Conversion from ${sourceFormat.toUpperCase()} to ${targetFormat.toUpperCase()} is not supported.`,
+        caveats: ['Choose a compatible destination format from the Conversion Matrix.'],
+      };
+    }
+    return {
+      supported: true,
+      fidelity: 'backend',
+      label: 'Backend Cloud Tool API',
+      summary: `Processes ${sourceFormat.toUpperCase()} to ${targetFormat.toUpperCase()} on the OmniDoc Studio server via /tools/invoke.`,
+      caveats: ['Requires internet connectivity and counts toward workspace plan quota.'],
+    };
+  }
+
   if (sourceFormat === targetFormat) {
     return {
       supported: true,
